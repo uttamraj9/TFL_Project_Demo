@@ -11,9 +11,12 @@ __pycache__/
 *.so
 .Python
 
-# Data files
-Data/
-*.csv
+# Data files (raw data only, normalized CSVs are tracked)
+Data/*
+!Data/normalized/
+Data/normalized/*
+!Data/normalized/*.csv
+!Data/normalized/*.txt
 *.xlsx
 *.json
 *.parquet
