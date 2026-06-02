@@ -28,7 +28,6 @@ import_table() {
     echo "[$(date '+%Y-%m-%d %H:%M:%S')] Starting ${table_name} import..."
 
     sqoop import \
-        -D mapreduce.framework.name=local \
         --connect "$SQOOP_CONNECT" \
         --username "$SQOOP_USER" \
         --password "$SQOOP_PASS" \
