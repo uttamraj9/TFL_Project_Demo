@@ -1,0 +1,488 @@
+// Jenkinsfile for Complete TfL ETL Pipeline
+// PostgreSQL → HDFS (Sqoop) → Hive Tables
+// Fixes memory issues with optimized settings
+
+pipeline {
+    agent any
+
+    parameters {
+        choice(
+            name: 'ETL_MODE',
+            choices: ['full', 'sqoop_only', 'hive_only', 'verify_only'],
+            description: 'Select ETL operation mode'
+        )
+        booleanParam(
+            name: 'CLEAN_START',
+            defaultValue: false,
+            description: 'Delete existing HDFS/Hive data before import'
+        )
+        string(
+            name: 'MAPPER_MEMORY',
+            defaultValue: '256',
+            description: 'MapReduce mapper memory in MB (256 recommended for low memory)'
+        )
+    }
+
+    environment {
+        // Cloudera Cluster
+        CLOUDERA_HOST = '13.41.167.97'
+        CLOUDERA_USER = 'consultant'
+        CLOUDERA_PASSWORD = 'WelcomeItc@2026'
+
+        // PostgreSQL Database
+        PG_HOST = '13.42.152.118'
+        PG_PORT = '5432'
+        PG_DB = 'testdb'
+        PG_USER = 'admin'
+        PG_PASSWORD = 'admin123'
+
+        // HDFS Paths
+        HDFS_BASE = '/user/consultant/tfl'
+
+        // Hive Database
+        HIVE_DB = 'tfl_warehouse'
+
+        // Memory Settings (FIX for OOM error)
+        HADOOP_CLIENT_OPTS = '-Xmx128m'
+        SQOOP_OPTS = '-D mapreduce.map.memory.mb=${MAPPER_MEMORY} -D mapreduce.map.java.opts=-Xmx204m'
+    }
+
+    stages {
+        stage('Environment Check') {
+            steps {
+                echo '========================================='
+                echo 'Stage 1: Environment Verification'
+                echo '========================================='
+                script {
+                    echo "ETL Mode: ${params.ETL_MODE}"
+                    echo "Clean Start: ${params.CLEAN_START}"
+                    echo "Mapper Memory: ${params.MAPPER_MEMORY} MB"
+                    echo "Cloudera: ${CLOUDERA_HOST}"
+                    echo "PostgreSQL: ${PG_HOST}:${PG_PORT}/${PG_DB}"
+                    echo "HDFS Base: ${HDFS_BASE}"
+                    echo "Hive DB: ${HIVE_DB}"
+                }
+
+                // Check Cloudera memory
+                sh '''
+                    echo "Checking Cloudera server memory..."
+                    sshpass -p "${CLOUDERA_PASSWORD}" ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+                        ${CLOUDERA_USER}@${CLOUDERA_HOST} "free -h" 2>&1 | grep -v "ITC Big Data Lab" || true
+                '''
+            }
+        }
+
+        stage('Kill Stale Jobs') {
+            steps {
+                echo '========================================='
+                echo 'Stage 2: Clean Stale Processes'
+                echo '========================================='
+                sh '''
+                    echo "Killing stale Sqoop/MapReduce jobs..."
+                    sshpass -p "${CLOUDERA_PASSWORD}" ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+                        ${CLOUDERA_USER}@${CLOUDERA_HOST} \
+                        "pkill -9 -f 'sqoop.*testdb' || true; pkill -9 -f 'MapReduce' || true" 2>&1 | \
+                        grep -v "ITC Big Data Lab" || true
+
+                    sleep 5
+                    echo "✓ Stale jobs cleaned"
+                '''
+            }
+        }
+
+        stage('Clean Existing Data') {
+            when {
+                expression { params.CLEAN_START == true }
+            }
+            steps {
+                echo '========================================='
+                echo 'Stage 3: Clean Existing HDFS/Hive Data'
+                echo '========================================='
+                sh '''
+                    echo "Dropping Hive database..."
+                    sshpass -p "${CLOUDERA_PASSWORD}" ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+                        ${CLOUDERA_USER}@${CLOUDERA_HOST} \
+                        "hive -e 'DROP DATABASE IF EXISTS ${HIVE_DB} CASCADE;'" 2>&1 | \
+                        grep -v "ITC Big Data Lab" || true
+
+                    echo "Cleaning HDFS directory..."
+                    sshpass -p "${CLOUDERA_PASSWORD}" ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+                        ${CLOUDERA_USER}@${CLOUDERA_HOST} \
+                        "hdfs dfs -rm -r -f -skipTrash ${HDFS_BASE}" 2>&1 | \
+                        grep -v "ITC Big Data Lab" || true
+
+                    echo "✓ Cleanup complete"
+                '''
+            }
+        }
+
+        stage('Sqoop Import - Dimensions') {
+            when {
+                expression { params.ETL_MODE == 'full' || params.ETL_MODE == 'sqoop_only' }
+            }
+            steps {
+                echo '========================================='
+                echo 'Stage 4: Sqoop Import - Dimension Tables'
+                echo '========================================='
+                script {
+                    def dimTables = ['dim_networks', 'dim_lines', 'dim_date', 'dim_stations']
+
+                    dimTables.each { table ->
+                        echo "Importing ${table}..."
+                        sh """
+                            sshpass -p "${CLOUDERA_PASSWORD}" ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+                                ${CLOUDERA_USER}@${CLOUDERA_HOST} \
+                                "export HADOOP_CLIENT_OPTS='${HADOOP_CLIENT_OPTS}' && \
+                                 sqoop import \
+                                   --connect 'jdbc:postgresql://${PG_HOST}:${PG_PORT}/${PG_DB}' \
+                                   --username ${PG_USER} \
+                                   --password ${PG_PASSWORD} \
+                                   --table ${table} \
+                                   --target-dir ${HDFS_BASE}/${table} \
+                                   --m 1 \
+                                   ${SQOOP_OPTS} \
+                                   --delete-target-dir \
+                                   --fields-terminated-by ',' \
+                                   --null-string '\\\\N' \
+                                   --null-non-string '\\\\N'" 2>&1 | \
+                                grep -v "ITC Big Data Lab" | grep -E "INFO|retrieved|rows" | tail -20
+                        """
+                        echo "✓ ${table} imported"
+                        sleep(10) // Prevent memory exhaustion
+                    }
+                }
+            }
+        }
+
+        stage('Sqoop Import - Fact Tables') {
+            when {
+                expression { params.ETL_MODE == 'full' || params.ETL_MODE == 'sqoop_only' }
+            }
+            steps {
+                echo '========================================='
+                echo 'Stage 5: Sqoop Import - Fact Tables'
+                echo '========================================='
+                script {
+                    def factTables = ['fact_station_lines', 'fact_passenger_entry_exit']
+
+                    factTables.each { table ->
+                        echo "Importing ${table}..."
+                        sh """
+                            sshpass -p "${CLOUDERA_PASSWORD}" ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+                                ${CLOUDERA_USER}@${CLOUDERA_HOST} \
+                                "export HADOOP_CLIENT_OPTS='${HADOOP_CLIENT_OPTS}' && \
+                                 sqoop import \
+                                   --connect 'jdbc:postgresql://${PG_HOST}:${PG_PORT}/${PG_DB}' \
+                                   --username ${PG_USER} \
+                                   --password ${PG_PASSWORD} \
+                                   --table ${table} \
+                                   --target-dir ${HDFS_BASE}/${table} \
+                                   --m 1 \
+                                   ${SQOOP_OPTS} \
+                                   --delete-target-dir \
+                                   --fields-terminated-by ',' \
+                                   --null-string '\\\\N' \
+                                   --null-non-string '\\\\N'" 2>&1 | \
+                                grep -v "ITC Big Data Lab" | grep -E "INFO|retrieved|rows" | tail -20
+                        """
+                        echo "✓ ${table} imported"
+                        sleep(10)
+                    }
+                }
+            }
+        }
+
+        stage('Verify HDFS Data') {
+            when {
+                expression { params.ETL_MODE == 'full' || params.ETL_MODE == 'sqoop_only' || params.ETL_MODE == 'verify_only' }
+            }
+            steps {
+                echo '========================================='
+                echo 'Stage 6: Verify HDFS Imports'
+                echo '========================================='
+                sh '''
+                    echo "HDFS directory structure:"
+                    sshpass -p "${CLOUDERA_PASSWORD}" ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+                        ${CLOUDERA_USER}@${CLOUDERA_HOST} \
+                        "hdfs dfs -ls ${HDFS_BASE}" 2>&1 | grep -v "ITC Big Data Lab" || true
+
+                    echo ""
+                    echo "Row counts per table:"
+                    for TABLE in dim_networks dim_lines dim_date dim_stations fact_station_lines fact_passenger_entry_exit; do
+                        COUNT=$(sshpass -p "${CLOUDERA_PASSWORD}" ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+                            ${CLOUDERA_USER}@${CLOUDERA_HOST} \
+                            "hdfs dfs -cat ${HDFS_BASE}/$TABLE/part-m-00000 | wc -l" 2>&1 | grep -v "ITC Big Data Lab")
+                        echo "  $TABLE: $COUNT rows"
+                    done
+                '''
+            }
+        }
+
+        stage('Create Hive Database') {
+            when {
+                expression { params.ETL_MODE == 'full' || params.ETL_MODE == 'hive_only' }
+            }
+            steps {
+                echo '========================================='
+                echo 'Stage 7: Create Hive Database & Tables'
+                echo '========================================='
+                sh '''
+                    # Create Hive database
+                    sshpass -p "${CLOUDERA_PASSWORD}" ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+                        ${CLOUDERA_USER}@${CLOUDERA_HOST} \
+                        "hive -e 'CREATE DATABASE IF NOT EXISTS ${HIVE_DB};'" 2>&1 | \
+                        grep -v "ITC Big Data Lab" || true
+
+                    echo "✓ Hive database created: ${HIVE_DB}"
+                '''
+            }
+        }
+
+        stage('Create Hive Tables - Dimensions') {
+            when {
+                expression { params.ETL_MODE == 'full' || params.ETL_MODE == 'hive_only' }
+            }
+            steps {
+                echo '========================================='
+                echo 'Stage 8: Create Hive Dimension Tables'
+                echo '========================================='
+                sh '''
+                    # Create Hive script
+                    cat > /tmp/create_hive_dims.hql << 'HIVE_EOF'
+USE tfl_warehouse;
+
+-- dim_networks
+DROP TABLE IF EXISTS dim_networks;
+CREATE EXTERNAL TABLE dim_networks (
+    network_id INT,
+    network_name STRING
+)
+ROW FORMAT DELIMITED
+FIELDS TERMINATED BY ','
+STORED AS TEXTFILE
+LOCATION '/user/consultant/tfl/dim_networks'
+TBLPROPERTIES ("skip.header.line.count"="1");
+
+-- dim_lines
+DROP TABLE IF EXISTS dim_lines;
+CREATE EXTERNAL TABLE dim_lines (
+    line_id INT,
+    line_name STRING,
+    line_color STRING,
+    network_id INT
+)
+ROW FORMAT DELIMITED
+FIELDS TERMINATED BY ','
+STORED AS TEXTFILE
+LOCATION '/user/consultant/tfl/dim_lines'
+TBLPROPERTIES ("skip.header.line.count"="1");
+
+-- dim_date
+DROP TABLE IF EXISTS dim_date;
+CREATE EXTERNAL TABLE dim_date (
+    date_id INT,
+    year INT,
+    period STRING,
+    period_start_date DATE,
+    period_end_date DATE
+)
+ROW FORMAT DELIMITED
+FIELDS TERMINATED BY ','
+STORED AS TEXTFILE
+LOCATION '/user/consultant/tfl/dim_date'
+TBLPROPERTIES ("skip.header.line.count"="1");
+
+-- dim_stations
+DROP TABLE IF EXISTS dim_stations;
+CREATE EXTERNAL TABLE dim_stations (
+    station_id INT,
+    station_name STRING,
+    nlc_code STRING,
+    station_type STRING,
+    network_id INT
+)
+ROW FORMAT DELIMITED
+FIELDS TERMINATED BY ','
+STORED AS TEXTFILE
+LOCATION '/user/consultant/tfl/dim_stations'
+TBLPROPERTIES ("skip.header.line.count"="1");
+HIVE_EOF
+
+                    # Copy and execute
+                    sshpass -p "${CLOUDERA_PASSWORD}" scp -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+                        /tmp/create_hive_dims.hql ${CLOUDERA_USER}@${CLOUDERA_HOST}:/tmp/ 2>&1 | grep -v "ITC Big Data Lab" || true
+
+                    sshpass -p "${CLOUDERA_PASSWORD}" ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+                        ${CLOUDERA_USER}@${CLOUDERA_HOST} \
+                        "hive -f /tmp/create_hive_dims.hql" 2>&1 | grep -v "ITC Big Data Lab" || true
+
+                    echo "✓ Dimension tables created"
+                '''
+            }
+        }
+
+        stage('Create Hive Tables - Facts') {
+            when {
+                expression { params.ETL_MODE == 'full' || params.ETL_MODE == 'hive_only' }
+            }
+            steps {
+                echo '========================================='
+                echo 'Stage 9: Create Hive Fact Tables'
+                echo '========================================='
+                sh '''
+                    # Create Hive script
+                    cat > /tmp/create_hive_facts.hql << 'HIVE_EOF'
+USE tfl_warehouse;
+
+-- fact_station_lines
+DROP TABLE IF EXISTS fact_station_lines;
+CREATE EXTERNAL TABLE fact_station_lines (
+    station_line_id INT,
+    station_id INT,
+    line_id INT,
+    effective_from DATE,
+    effective_to DATE,
+    is_interchange BOOLEAN
+)
+ROW FORMAT DELIMITED
+FIELDS TERMINATED BY ','
+STORED AS TEXTFILE
+LOCATION '/user/consultant/tfl/fact_station_lines'
+TBLPROPERTIES ("skip.header.line.count"="1");
+
+-- fact_passenger_entry_exit
+DROP TABLE IF EXISTS fact_passenger_entry_exit;
+CREATE EXTERNAL TABLE fact_passenger_entry_exit (
+    fact_id INT,
+    station_id INT,
+    date_id INT,
+    total_entry_exit BIGINT
+)
+ROW FORMAT DELIMITED
+FIELDS TERMINATED BY ','
+STORED AS TEXTFILE
+LOCATION '/user/consultant/tfl/fact_passenger_entry_exit'
+TBLPROPERTIES ("skip.header.line.count"="1");
+HIVE_EOF
+
+                    # Copy and execute
+                    sshpass -p "${CLOUDERA_PASSWORD}" scp -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+                        /tmp/create_hive_facts.hql ${CLOUDERA_USER}@${CLOUDERA_HOST}:/tmp/ 2>&1 | grep -v "ITC Big Data Lab" || true
+
+                    sshpass -p "${CLOUDERA_PASSWORD}" ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+                        ${CLOUDERA_USER}@${CLOUDERA_HOST} \
+                        "hive -f /tmp/create_hive_facts.hql" 2>&1 | grep -v "ITC Big Data Lab" || true
+
+                    echo "✓ Fact tables created"
+                '''
+            }
+        }
+
+        stage('Verify Hive Tables') {
+            when {
+                expression { params.ETL_MODE == 'full' || params.ETL_MODE == 'hive_only' || params.ETL_MODE == 'verify_only' }
+            }
+            steps {
+                echo '========================================='
+                echo 'Stage 10: Verify Hive Tables'
+                echo '========================================='
+                sh '''
+                    echo "Hive tables in ${HIVE_DB}:"
+                    sshpass -p "${CLOUDERA_PASSWORD}" ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+                        ${CLOUDERA_USER}@${CLOUDERA_HOST} \
+                        "hive -e 'USE ${HIVE_DB}; SHOW TABLES;'" 2>&1 | grep -v "ITC Big Data Lab" || true
+
+                    echo ""
+                    echo "Row counts per Hive table:"
+                    for TABLE in dim_networks dim_lines dim_date dim_stations fact_station_lines fact_passenger_entry_exit; do
+                        COUNT=$(sshpass -p "${CLOUDERA_PASSWORD}" ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+                            ${CLOUDERA_USER}@${CLOUDERA_HOST} \
+                            "hive -e 'USE ${HIVE_DB}; SELECT COUNT(*) FROM $TABLE;' 2>&1" | \
+                            grep -v "ITC Big Data Lab" | tail -1)
+                        echo "  $TABLE: $COUNT rows"
+                    done
+                '''
+            }
+        }
+
+        stage('Sample Queries') {
+            when {
+                expression { params.ETL_MODE == 'full' || params.ETL_MODE == 'verify_only' }
+            }
+            steps {
+                echo '========================================='
+                echo 'Stage 11: Run Sample Analytical Queries'
+                echo '========================================='
+                sh '''
+                    echo "Sample Query 1: Top 10 busiest stations (2019)"
+                    sshpass -p "${CLOUDERA_PASSWORD}" ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+                        ${CLOUDERA_USER}@${CLOUDERA_HOST} \
+                        "hive -e 'USE ${HIVE_DB};
+                        SELECT s.station_name, SUM(f.total_entry_exit) as total_passengers
+                        FROM fact_passenger_entry_exit f
+                        JOIN dim_stations s ON f.station_id = s.station_id
+                        JOIN dim_date d ON f.date_id = d.date_id
+                        WHERE d.year = 2019
+                        GROUP BY s.station_name
+                        ORDER BY total_passengers DESC
+                        LIMIT 10;'" 2>&1 | grep -v "ITC Big Data Lab" | tail -15 || true
+
+                    echo ""
+                    echo "Sample Query 2: Lines with most stations"
+                    sshpass -p "${CLOUDERA_PASSWORD}" ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+                        ${CLOUDERA_USER}@${CLOUDERA_HOST} \
+                        "hive -e 'USE ${HIVE_DB};
+                        SELECT l.line_name, COUNT(DISTINCT sl.station_id) as num_stations
+                        FROM fact_station_lines sl
+                        JOIN dim_lines l ON sl.line_id = l.line_id
+                        GROUP BY l.line_name
+                        ORDER BY num_stations DESC;'" 2>&1 | grep -v "ITC Big Data Lab" | tail -15 || true
+                '''
+            }
+        }
+    }
+
+    post {
+        success {
+            echo '========================================='
+            echo '✓✓✓ COMPLETE ETL PIPELINE SUCCESSFUL ✓✓✓'
+            echo '========================================='
+            echo "Mode: ${params.ETL_MODE}"
+            echo "Clean Start: ${params.CLEAN_START}"
+            echo ""
+            echo "PostgreSQL: ${PG_HOST}:${PG_PORT}/${PG_DB}"
+            echo "HDFS: ${HDFS_BASE}"
+            echo "Hive DB: ${HIVE_DB}"
+            echo ""
+            echo "Access Cloudera Manager:"
+            echo "  http://13.41.167.97:7180/"
+            echo "  User: Admin"
+            echo "  Password: Admin@2026"
+            echo ""
+            echo "Query your data:"
+            echo "  ssh consultant@13.41.167.97"
+            echo "  hive"
+            echo "  USE tfl_warehouse;"
+            echo "  SELECT * FROM dim_stations LIMIT 10;"
+            echo '========================================='
+        }
+        failure {
+            echo '========================================='
+            echo '✗✗✗ PIPELINE FAILED ✗✗✗'
+            echo '========================================='
+            echo "Mode: ${params.ETL_MODE}"
+            echo "Check console output for errors"
+            echo ""
+            echo "Common issues:"
+            echo "  1. Memory error → Reduce MAPPER_MEMORY parameter"
+            echo "  2. Connection timeout → Check network/firewall"
+            echo "  3. Permission denied → Check HDFS permissions"
+            echo ""
+            echo "Cloudera Manager: http://13.41.167.97:7180/"
+            echo '========================================='
+        }
+        always {
+            echo 'Pipeline execution completed'
+        }
+    }
+}
