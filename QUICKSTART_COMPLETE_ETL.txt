@@ -1,0 +1,237 @@
+╔═══════════════════════════════════════════════════════════════════════╗
+║                 TfL Complete ETL Pipeline - Quick Start               ║
+║              PostgreSQL → HDFS → Hive (Memory Optimized)              ║
+╚═══════════════════════════════════════════════════════════════════════╝
+
+📋 WHAT IT DOES
+───────────────
+✓ Imports 6 tables from PostgreSQL to HDFS (via Sqoop)
+✓ Creates Hive database with external tables
+✓ Runs verification queries
+✓ FIXES memory OOM error (Java heap allocation)
+
+⏱️  Duration: ~7-8 minutes for complete ETL
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+🚀 STEP 1: CREATE JENKINS JOB
+──────────────────────────────
+
+Jenkins UI: http://51.24.13.205:8081/
+
+1. Click "New Item"
+2. Name: "TfL_Complete_ETL_Pipeline"
+3. Type: "Pipeline"
+4. Pipeline Definition: "Pipeline script from SCM"
+5. SCM: Git
+6. Repository URL: https://github.com/uttamraj9/TFL_Project_Demo.git
+7. Branch: */main
+8. Script Path: Jenkinsfile_Complete_ETL
+9. Save
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+🎯 STEP 2: RUN PIPELINE
+────────────────────────
+
+Click "Build with Parameters":
+
+┌────────────────────────────────────────────────────────┐
+│ ETL_MODE:        full                   (dropdown)     │
+│ CLEAN_START:     ☑ true                (checkbox)     │
+│ MAPPER_MEMORY:   256                    (text)        │
+└────────────────────────────────────────────────────────┘
+
+Then click: "Build"
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+📊 STAGE PROGRESS (11 Stages)
+──────────────────────────────
+
+[Stage  1] Environment Check           ━━━━━━━━━━ 10s  ✓
+[Stage  2] Kill Stale Jobs             ━━━━━━━━━━  5s  ✓
+[Stage  3] Clean Existing Data         ━━━━━━━━━━ 15s  ✓
+[Stage  4] Sqoop Import - Dimensions   ━━━━━━━━━━120s  ✓
+[Stage  5] Sqoop Import - Facts        ━━━━━━━━━━180s  ✓
+[Stage  6] Verify HDFS Data            ━━━━━━━━━━ 20s  ✓
+[Stage  7] Create Hive Database        ━━━━━━━━━━  5s  ✓
+[Stage  8] Create Hive Tables - Dims   ━━━━━━━━━━ 15s  ✓
+[Stage  9] Create Hive Tables - Facts  ━━━━━━━━━━ 15s  ✓
+[Stage 10] Verify Hive Tables          ━━━━━━━━━━ 30s  ✓
+[Stage 11] Sample Queries              ━━━━━━━━━━ 40s  ✓
+
+Total: ~7-8 minutes
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+✅ VERIFY RESULTS
+──────────────────
+
+### SSH to Cloudera:
+ssh -i ~/Downloads/Training/test_key.pem ec2-user@13.41.167.97
+sudo su - consultant
+
+### Check HDFS:
+hdfs dfs -ls /user/consultant/tfl/
+hdfs dfs -cat /user/consultant/tfl/dim_stations/part-m-00000 | wc -l
+
+### Query Hive:
+hive
+
+hive> USE tfl_warehouse;
+hive> SHOW TABLES;
+hive> SELECT COUNT(*) FROM dim_stations;
+hive> SELECT * FROM dim_stations LIMIT 10;
+
+### Sample Query:
+hive> SELECT
+        s.station_name,
+        SUM(f.total_entry_exit) as total_passengers
+      FROM fact_passenger_entry_exit f
+      JOIN dim_stations s ON f.station_id = s.station_id
+      JOIN dim_date d ON f.date_id = d.date_id
+      WHERE d.year = 2019
+      GROUP BY s.station_name
+      ORDER BY total_passengers DESC
+      LIMIT 10;
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+📈 EXPECTED ROW COUNTS
+──────────────────────
+
+Table                            PostgreSQL  HDFS   Hive
+─────────────────────────────────────────────────────────
+dim_networks                          1        1      1
+dim_lines                            14       14     14
+dim_date                             15       15     15
+dim_stations                        436      436    436
+fact_station_lines                  575      575    575
+fact_passenger_entry_exit         4,771    4,771  4,771
+─────────────────────────────────────────────────────────
+TOTAL                             5,812    5,812  5,812
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+🔧 TROUBLESHOOTING
+───────────────────
+
+❌ Memory Error (OOM):
+   → Reduce MAPPER_MEMORY: 256 → 128
+   → Check free memory: ssh consultant@13.41.167.97 "free -h"
+
+❌ HDFS Already Exists:
+   → Set CLEAN_START = true
+   → Or: hdfs dfs -rm -r /user/consultant/tfl
+
+❌ Hive Table Exists:
+   → Set CLEAN_START = true
+   → Or: hive -e 'DROP DATABASE tfl_warehouse CASCADE;'
+
+❌ PostgreSQL Timeout:
+   → Check PG is running: telnet 13.42.152.118 5432
+   → Check firewall allows 5432
+
+❌ Sqoop Hangs:
+   → Check YARN: http://13.41.167.97:8088/
+   → Kill app: yarn application -kill <app-id>
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+🎯 PIPELINE MODES
+──────────────────
+
+ETL_MODE Options:
+
+▸ full           Complete ETL: Sqoop + Hive + Verify
+▸ sqoop_only     Only import PostgreSQL → HDFS
+▸ hive_only      Only create Hive tables (skip Sqoop)
+▸ verify_only    Only run verification queries
+
+CLEAN_START:
+
+▸ true           Delete existing HDFS/Hive data (RECOMMENDED first run)
+▸ false          Keep existing data (incremental mode)
+
+MAPPER_MEMORY:
+
+▸ 256            Safe for 8 GB RAM (RECOMMENDED)
+▸ 512            For 16 GB RAM
+▸ 1024           For 32 GB+ RAM
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+📚 DOCUMENTATION FILES
+───────────────────────
+
+COMPLETE_PIPELINE_SETUP.md    Detailed setup guide (this is THE MAIN DOC)
+SQOOP_MEMORY_FIX.md           Memory troubleshooting guide
+PIPELINE_ARCHITECTURE.md      Visual architecture diagrams
+JENKINS_PIPELINE_USAGE.md     Spark pipeline docs (separate pipeline)
+fix_sqoop_memory.sh           Automated diagnostic script
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+🌐 ACCESS URLS
+───────────────
+
+Jenkins:           http://51.24.13.205:8081/
+                   User: consultant | Pass: WelcomeItc@2026
+
+Cloudera Manager:  http://13.41.167.97:7180/
+                   User: Admin | Pass: Admin@2026
+
+YARN RM:           http://13.41.167.97:8088/
+
+PostgreSQL:        13.42.152.118:5432
+                   DB: testdb | User: admin | Pass: admin123
+
+GitHub:            https://github.com/uttamraj9/TFL_Project_Demo
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+✅ SUCCESS INDICATORS
+──────────────────────
+
+When pipeline completes successfully, you will see:
+
+╔════════════════════════════════════════════════════╗
+║ ✓✓✓ COMPLETE ETL PIPELINE SUCCESSFUL ✓✓✓          ║
+╚════════════════════════════════════════════════════╝
+
+Mode: full
+Clean Start: true
+
+PostgreSQL: 13.42.152.118:5432/testdb
+HDFS: /user/consultant/tfl
+Hive DB: tfl_warehouse
+
+Access Cloudera Manager:
+  http://13.41.167.97:7180/
+  User: Admin | Password: Admin@2026
+
+Query your data:
+  ssh consultant@13.41.167.97
+  hive
+  USE tfl_warehouse;
+  SELECT * FROM dim_stations LIMIT 10;
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+🎉 YOU'RE DONE!
+────────────────
+
+Your TfL data is now in Hive and ready for analytics!
+
+Next steps:
+  1. Run more complex analytical queries
+  2. Connect BI tools (Tableau, PowerBI) to Hive
+  3. Create aggregated tables for reporting
+  4. Schedule pipeline to run daily/weekly
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Created: June 2, 2026
+Status: Production Ready ✅
+Pipeline: Jenkinsfile_Complete_ETL
