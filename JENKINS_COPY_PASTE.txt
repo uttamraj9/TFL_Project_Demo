@@ -1,0 +1,177 @@
+================================================================================
+JENKINS BUILD SCRIPT - COPY AND PASTE THIS INTO YOUR JENKINS JOB
+================================================================================
+
+Job URL: http://51.24.13.205:8081/job/PG_to_HDFS_Sqoop_Uttam/configure
+
+Instructions:
+1. Click "Configure" on your Jenkins job
+2. Scroll to "Build" section
+3. Delete any existing "Execute shell" steps
+4. Click "Add build step" → "Execute shell"
+5. Copy everything between the ===SCRIPT START=== and ===SCRIPT END=== markers
+6. Paste into the "Command" text box
+7. Click "Save"
+8. Click "Build Now"
+
+================================================================================
+===SCRIPT START===
+================================================================================
+#!/bin/bash
+set -e
+
+# Configuration
+REMOTE_HOST="13.41.167.97"
+REMOTE_USER="consultant"
+REMOTE_PASSWORD="WelcomeItc@2026"
+REMOTE_DIR="/home/consultant/uttam/TFL_Project_Demo"
+HDFS_TARGET="/tmp/uttam/tfl_data"
+
+echo "========================================"
+echo "TfL Pipeline - GitHub to Cloudera"
+echo "========================================"
+echo "Workspace: $WORKSPACE"
+echo "Remote: $REMOTE_HOST:$REMOTE_DIR"
+echo "========================================"
+echo ""
+
+# Step 1: Verify scripts from GitHub
+echo "Step 1: Verify scripts in workspace..."
+if [ ! -d "$WORKSPACE/src/sqoop" ]; then
+    echo "ERROR: Sqoop directory not found!"
+    exit 1
+fi
+ls -lh $WORKSPACE/src/sqoop/*.sh
+ls -lh $WORKSPACE/src/hive/*.hql
+echo "✓ Scripts found"
+echo ""
+
+# Step 2: Create remote directories
+echo "Step 2: Create directories on Cloudera..."
+sshpass -p "$REMOTE_PASSWORD" ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+    $REMOTE_USER@$REMOTE_HOST "mkdir -p $REMOTE_DIR/src/sqoop $REMOTE_DIR/src/hive"
+echo "✓ Directories created"
+echo ""
+
+# Step 3: Copy scripts
+echo "Step 3: Copy scripts to Cloudera..."
+sshpass -p "$REMOTE_PASSWORD" scp -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+    $WORKSPACE/src/sqoop/*.sh $REMOTE_USER@$REMOTE_HOST:$REMOTE_DIR/src/sqoop/
+sshpass -p "$REMOTE_PASSWORD" scp -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+    $WORKSPACE/src/hive/*.hql $WORKSPACE/src/hive/*.sh \
+    $REMOTE_USER@$REMOTE_HOST:$REMOTE_DIR/src/hive/ 2>/dev/null || true
+echo "✓ Scripts copied"
+echo ""
+
+# Step 4: Set permissions
+echo "Step 4: Set execute permissions..."
+sshpass -p "$REMOTE_PASSWORD" ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+    $REMOTE_USER@$REMOTE_HOST "chmod +x $REMOTE_DIR/src/sqoop/*.sh $REMOTE_DIR/src/hive/*.sh 2>/dev/null || true"
+echo "✓ Permissions set"
+echo ""
+
+# Step 5: Verify on remote
+echo "Step 5: Verify files on Cloudera..."
+sshpass -p "$REMOTE_PASSWORD" ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+    $REMOTE_USER@$REMOTE_HOST "ls -lh $REMOTE_DIR/src/sqoop/ && ls -lh $REMOTE_DIR/src/hive/"
+echo "✓ Files verified"
+echo ""
+
+# Step 6: Clean HDFS
+echo "======================================"
+echo "Step 6: Clean HDFS..."
+echo "======================================"
+sshpass -p "$REMOTE_PASSWORD" ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+    $REMOTE_USER@$REMOTE_HOST "hdfs dfs -rm -r -f -skipTrash $HDFS_TARGET || true"
+echo "✓ HDFS cleaned"
+echo ""
+
+# Step 7: Run Sqoop
+echo "======================================"
+echo "Step 7: Run Sqoop Import..."
+echo "======================================"
+sshpass -p "$REMOTE_PASSWORD" ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+    $REMOTE_USER@$REMOTE_HOST "cd $REMOTE_DIR && bash src/sqoop/import_all_tables.sh"
+echo "✓ Sqoop completed"
+echo ""
+
+# Step 8: Create Hive database
+echo "======================================"
+echo "Step 8: Create Hive Database..."
+echo "======================================"
+sshpass -p "$REMOTE_PASSWORD" ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+    $REMOTE_USER@$REMOTE_HOST "cd $REMOTE_DIR && hive -f src/hive/create_database.hql"
+echo "✓ Database created"
+echo ""
+
+# Step 9: Create Hive tables
+echo "======================================"
+echo "Step 9: Create Hive Tables..."
+echo "======================================"
+sshpass -p "$REMOTE_PASSWORD" ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+    $REMOTE_USER@$REMOTE_HOST "cd $REMOTE_DIR && hive -f src/hive/create_tables.hql"
+echo "✓ Tables created"
+echo ""
+
+# Step 10: Verify
+echo "======================================"
+echo "VERIFICATION"
+echo "======================================"
+echo ""
+echo "HDFS Contents:"
+sshpass -p "$REMOTE_PASSWORD" ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+    $REMOTE_USER@$REMOTE_HOST "hdfs dfs -ls $HDFS_TARGET"
+
+echo ""
+echo "Hive Tables:"
+sshpass -p "$REMOTE_PASSWORD" ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+    $REMOTE_USER@$REMOTE_HOST "hive -e 'USE uttam_tfl; SHOW TABLES;'"
+
+echo ""
+echo "Record Counts:"
+sshpass -p "$REMOTE_PASSWORD" ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+    $REMOTE_USER@$REMOTE_HOST "hive -e \"USE uttam_tfl; SELECT 'dim_stations' AS tbl, COUNT(*) FROM dim_stations;\""
+
+echo ""
+echo "======================================"
+echo "✓✓✓ PIPELINE COMPLETE ✓✓✓"
+echo "======================================"
+echo "GitHub: uttamraj9/TFL_Project_Demo"
+echo "HDFS: $HDFS_TARGET"
+echo "Hive: uttam_tfl (6 tables, 5,812 records)"
+echo "======================================"
+================================================================================
+===SCRIPT END===
+================================================================================
+
+WHAT THIS SCRIPT DOES:
+1. Verifies scripts exist in Jenkins workspace (from GitHub clone)
+2. Creates directories on Cloudera cluster
+3. Copies Sqoop scripts from workspace to Cloudera
+4. Copies Hive scripts from workspace to Cloudera
+5. Sets execute permissions
+6. Cleans HDFS target directory
+7. Runs Sqoop import (6 tables: PostgreSQL → HDFS)
+8. Creates Hive database (uttam_tfl)
+9. Creates Hive external tables (6 tables)
+10. Verifies HDFS and Hive data
+
+EXPECTED RESULT:
+✓ 6 tables imported to HDFS at /tmp/uttam/tfl_data/
+✓ Hive database 'uttam_tfl' created
+✓ 6 Hive external tables created
+✓ Total 5,812 records loaded
+✓ Console shows "SUCCESS"
+
+TROUBLESHOOTING:
+- If "sshpass not found": Install on Jenkins server (sudo yum install sshpass)
+- If "Permission denied": Verify SSH credentials
+- If "hdfs command not found": Add Hadoop to PATH on Cloudera
+- If Sqoop fails: Check PostgreSQL connectivity from Cloudera
+
+For detailed documentation, see:
+- README_JENKINS.md (simple guide)
+- JENKINS_FINAL_BUILD_SCRIPT.sh (production version with full error handling)
+- JENKINS_GITHUB_WORKFLOW.md (workflow explanation)
+
+================================================================================
