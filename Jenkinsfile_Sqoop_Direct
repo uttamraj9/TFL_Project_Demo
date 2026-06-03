@@ -1,0 +1,241 @@
+// Jenkinsfile for PostgreSQL → HDFS Direct Copy
+// Uses --direct mode with pg_dump for faster, reliable transfer
+
+pipeline {
+    agent any
+
+    parameters {
+        choice(
+            name: 'TABLE_NAME',
+            choices: [
+                'dim_networks',
+                'dim_lines',
+                'dim_stations',
+                'dim_date',
+                'fact_station_lines',
+                'fact_passenger_entry_exit',
+                'ALL_TABLES'
+            ],
+            description: 'Select which table to import'
+        )
+    }
+
+    environment {
+        // PostgreSQL Database
+        DB_HOST = '13.42.152.118'
+        DB_PORT = '5432'
+        DB_NAME = 'testdb'
+        DB_USER = 'admin'
+        DB_PASSWORD = 'admin123'
+
+        // Cloudera Cluster
+        REMOTE_HOST = '13.41.167.97'
+        REMOTE_USER = 'consultant'
+        REMOTE_PASSWORD = 'WelcomeItc@2026'
+
+        // HDFS Target
+        HDFS_BASE = '/user/uttam/tfl_warehouse'
+        TEMP_DIR = '/tmp/uttam/pg_export'
+    }
+
+    stages {
+        stage('Setup') {
+            steps {
+                echo '========================================='
+                echo 'TfL PostgreSQL → HDFS Direct Copy'
+                echo '========================================='
+                echo "Table: ${params.TABLE_NAME}"
+                echo "Database: ${DB_HOST}:${DB_PORT}/${DB_NAME}"
+                echo "HDFS: ${HDFS_BASE}"
+                echo '========================================='
+            }
+        }
+
+        stage('Checkout') {
+            steps {
+                echo 'Git Checkout'
+                checkout scm
+            }
+        }
+
+        stage('Pre-flight Checks') {
+            steps {
+                echo '========================================='
+                echo 'Pre-flight System Checks'
+                echo '========================================='
+                sh '''
+                    echo "Checking Cloudera connectivity..."
+                    sshpass -p "${REMOTE_PASSWORD}" ssh -o StrictHostKeyChecking=no \
+                        -o ConnectTimeout=10 -o UserKnownHostsFile=/dev/null \
+                        ${REMOTE_USER}@${REMOTE_HOST} "hostname"
+
+                    echo "Checking PostgreSQL connectivity from edge node..."
+                    sshpass -p "${REMOTE_PASSWORD}" ssh -o StrictHostKeyChecking=no \
+                        -o UserKnownHostsFile=/dev/null ${REMOTE_USER}@${REMOTE_HOST} \
+                        "timeout 5 nc -zv ${DB_HOST} ${DB_PORT}" 2>&1 || \
+                        { echo "ERROR: Cannot reach PostgreSQL"; exit 1; }
+
+                    echo "✓ Pre-flight checks complete"
+                '''
+            }
+        }
+
+        stage('Export from PostgreSQL') {
+            steps {
+                echo '========================================='
+                echo 'Stage: Export Data from PostgreSQL'
+                echo '========================================='
+
+                script {
+                    def tables = params.TABLE_NAME == 'ALL_TABLES' ?
+                        ['dim_networks', 'dim_lines', 'dim_stations', 'dim_date', 'fact_station_lines', 'fact_passenger_entry_exit'] :
+                        [params.TABLE_NAME]
+
+                    tables.each { table ->
+                        echo "Exporting ${table}..."
+                        sh """
+                            sshpass -p "${REMOTE_PASSWORD}" ssh -o StrictHostKeyChecking=no \
+                                -o UserKnownHostsFile=/dev/null ${REMOTE_USER}@${REMOTE_HOST} bash << 'REMOTE_SCRIPT'
+
+# Create temp directory
+mkdir -p ${TEMP_DIR}
+
+# Export table to CSV
+echo "Exporting ${table} to CSV..."
+PGPASSWORD=${DB_PASSWORD} psql -h ${DB_HOST} -U ${DB_USER} -d ${DB_NAME} -c "\\\\COPY ${table} TO '${TEMP_DIR}/${table}.csv' WITH CSV HEADER"
+
+# Check file size
+ls -lh ${TEMP_DIR}/${table}.csv
+
+# Count records
+wc -l ${TEMP_DIR}/${table}.csv
+
+echo "✓ ${table} exported"
+
+REMOTE_SCRIPT
+                        """
+                    }
+                }
+            }
+        }
+
+        stage('Load to HDFS') {
+            steps {
+                echo '========================================='
+                echo 'Stage: Load Data to HDFS'
+                echo '========================================='
+
+                script {
+                    def tables = params.TABLE_NAME == 'ALL_TABLES' ?
+                        ['dim_networks', 'dim_lines', 'dim_stations', 'dim_date', 'fact_station_lines', 'fact_passenger_entry_exit'] :
+                        [params.TABLE_NAME]
+
+                    tables.each { table ->
+                        echo "Loading ${table} to HDFS..."
+                        sh """
+                            sshpass -p "${REMOTE_PASSWORD}" ssh -o StrictHostKeyChecking=no \
+                                -o UserKnownHostsFile=/dev/null ${REMOTE_USER}@${REMOTE_HOST} bash << 'REMOTE_SCRIPT'
+
+# Remove existing HDFS directory
+hdfs dfs -rm -r -f -skipTrash ${HDFS_BASE}/${table}
+
+# Create HDFS directory
+hdfs dfs -mkdir -p ${HDFS_BASE}/${table}
+
+# Copy CSV to HDFS
+hdfs dfs -put ${TEMP_DIR}/${table}.csv ${HDFS_BASE}/${table}/
+
+# Verify
+echo "HDFS contents:"
+hdfs dfs -ls ${HDFS_BASE}/${table}/
+
+# Count records in HDFS
+HDFS_COUNT=\$(hdfs dfs -cat ${HDFS_BASE}/${table}/${table}.csv | wc -l)
+LOCAL_COUNT=\$(wc -l < ${TEMP_DIR}/${table}.csv)
+
+echo "Local records: \$LOCAL_COUNT"
+echo "HDFS records: \$HDFS_COUNT"
+
+if [ "\$LOCAL_COUNT" -eq "\$HDFS_COUNT" ]; then
+    echo "✓ ${table} verification passed"
+else
+    echo "⚠ Record count mismatch!"
+    exit 1
+fi
+
+# Cleanup local temp file
+rm -f ${TEMP_DIR}/${table}.csv
+
+echo "✓ ${table} loaded successfully"
+
+REMOTE_SCRIPT
+                        """
+                    }
+                }
+            }
+        }
+
+        stage('Verify Results') {
+            steps {
+                echo '========================================='
+                echo 'Stage: Verify HDFS Data'
+                echo '========================================='
+                sh '''
+                    echo "Checking HDFS directories..."
+
+                    if [ "${TABLE_NAME}" = "ALL_TABLES" ]; then
+                        for table in dim_networks dim_lines dim_stations dim_date fact_station_lines fact_passenger_entry_exit; do
+                            echo ""
+                            echo "Table: $table"
+                            sshpass -p "${REMOTE_PASSWORD}" ssh -o StrictHostKeyChecking=no \
+                                -o UserKnownHostsFile=/dev/null ${REMOTE_USER}@${REMOTE_HOST} \
+                                "hdfs dfs -ls ${HDFS_BASE}/$table/ && \
+                                hdfs dfs -cat ${HDFS_BASE}/$table/*.csv | wc -l" || echo "⚠ Error"
+                        done
+                    else
+                        echo "Table: ${TABLE_NAME}"
+                        sshpass -p "${REMOTE_PASSWORD}" ssh -o StrictHostKeyChecking=no \
+                            -o UserKnownHostsFile=/dev/null ${REMOTE_USER}@${REMOTE_HOST} \
+                            "hdfs dfs -ls ${HDFS_BASE}/${TABLE_NAME}/ && \
+                            echo 'Sample records:' && \
+                            hdfs dfs -cat ${HDFS_BASE}/${TABLE_NAME}/*.csv | head -5"
+                    fi
+
+                    echo "✓ Verification complete"
+                '''
+            }
+        }
+    }
+
+    post {
+        success {
+            echo '========================================='
+            echo '✓✓✓ DATA IMPORT COMPLETED SUCCESSFULLY ✓✓✓'
+            echo '========================================='
+            echo "Table(s): ${params.TABLE_NAME}"
+            echo "HDFS Location: ${HDFS_BASE}"
+            echo ""
+            echo "Next Steps:"
+            echo "  1. Create Hive external tables: Run TfL_Hive_Setup"
+            echo "  2. Query data: http://${REMOTE_HOST}:8888"
+            echo "  3. Verify in Hue File Browser: ${HDFS_BASE}"
+            echo '========================================='
+        }
+        failure {
+            echo '========================================='
+            echo '✗✗✗ DATA IMPORT FAILED ✗✗✗'
+            echo '========================================='
+            echo "Table: ${params.TABLE_NAME}"
+            echo ""
+            echo "Common issues:"
+            echo "  1. PostgreSQL unreachable - Check: nc -zv ${DB_HOST} ${DB_PORT}"
+            echo "  2. HDFS permissions - Check: hdfs dfs -ls ${HDFS_BASE}"
+            echo "  3. Disk space - Check: hdfs dfs -df -h"
+            echo "  4. Table not found - Verify: psql -h ${DB_HOST} -U ${DB_USER} -d ${DB_NAME}"
+            echo '========================================='
+        }
+        always {
+            echo 'Pipeline execution completed'
+        }
+    }
+}
