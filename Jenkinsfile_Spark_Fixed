@@ -206,6 +206,10 @@ cd ${PROJECT_DIR}
 export SPARK_HOME=/opt/cloudera/parcels/CDH/lib/spark
 export PATH=\$SPARK_HOME/bin:\$PATH
 
+# Override PYSPARK_PYTHON to use system Python (accessible to YARN executors)
+export PYSPARK_PYTHON=/usr/bin/python3
+export PYSPARK_DRIVER_PYTHON=/usr/bin/python3
+
 # Run spark-submit
 spark-submit \\
   --master yarn \\
@@ -220,6 +224,8 @@ spark-submit \\
   --conf spark.executor.heartbeatInterval=30s \\
   --conf spark.dynamicAllocation.enabled=false \\
   --conf spark.shuffle.service.enabled=false \\
+  --conf spark.pyspark.python=/usr/bin/python3 \\
+  --conf spark.pyspark.driver.python=/usr/bin/python3 \\
   src/spark/${SPARK_SCRIPT}
 SPARK_EOF
 
