@@ -92,10 +92,41 @@ pipeline {
             }
         }
 
+        stage('Check YARN Resources') {
+            steps {
+                echo '========================================='
+                echo 'Stage 4: Check YARN Resource Availability'
+                echo '========================================='
+                sh '''
+                    echo "Checking YARN NodeManager status..."
+                    sshpass -p "${REMOTE_PASSWORD}" ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+                        ${REMOTE_USER}@${REMOTE_HOST} \
+                        "yarn node -list 2>&1 | grep -E 'Total Nodes|RUNNING'" 2>&1 | \
+                        grep -v "ITC Big Data Lab" || true
+
+                    echo ""
+                    echo "Checking for stuck applications..."
+                    sshpass -p "${REMOTE_PASSWORD}" ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+                        ${REMOTE_USER}@${REMOTE_HOST} \
+                        "yarn application -list -appStates ACCEPTED 2>&1 | tail -5" 2>&1 | \
+                        grep -v "ITC Big Data Lab" || true
+
+                    echo ""
+                    echo "Checking system memory..."
+                    sshpass -p "${REMOTE_PASSWORD}" ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+                        ${REMOTE_USER}@${REMOTE_HOST} \
+                        "free -h | grep -E 'Mem:|available'" 2>&1 | \
+                        grep -v "ITC Big Data Lab" || true
+
+                    echo "✓ YARN resources checked"
+                '''
+            }
+        }
+
         stage('Prepare HDFS') {
             steps {
                 echo '========================================='
-                echo 'Stage 4: Prepare HDFS Output Directory'
+                echo 'Stage 5: Prepare HDFS Output Directory'
                 echo '========================================='
                 sh '''
                     # Clean up previous output
@@ -112,35 +143,47 @@ pipeline {
         stage('Run Spark Job') {
             steps {
                 echo '========================================='
-                echo 'Stage 5: Execute PySpark Job'
+                echo 'Stage 6: Execute PySpark Job'
                 echo '========================================='
                 echo "Script: ${params.SPARK_SCRIPT}"
                 echo "Executors: ${params.NUM_EXECUTORS}"
                 echo "Memory: ${params.EXECUTOR_MEMORY}"
                 echo "Cores: ${params.EXECUTOR_CORES}"
-                sh '''
-                    sshpass -p "${REMOTE_PASSWORD}" ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
-                        ${REMOTE_USER}@${REMOTE_HOST} \
-                        "cd ${PROJECT_DIR} && spark-submit \
-                        --master yarn \
-                        --deploy-mode client \
-                        --num-executors ${NUM_EXECUTORS} \
-                        --executor-memory ${EXECUTOR_MEMORY} \
-                        --executor-cores ${EXECUTOR_CORES} \
-                        --conf spark.yarn.submit.waitAppCompletion=true \
-                        src/spark/${SPARK_SCRIPT}" 2>&1 | \
-                        grep -v "ITC Big Data Lab" | grep -v "Commands:" | grep -v "HDFS home:" | grep -v "━" || \
-                        { echo "Spark job failed but continuing to verification..."; }
 
-                    echo "✓ Spark job execution completed"
-                '''
+                timeout(time: 5, unit: 'MINUTES') {
+                    sh '''
+                        echo "Starting Spark job with 5-minute timeout..."
+
+                        sshpass -p "${REMOTE_PASSWORD}" ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+                            ${REMOTE_USER}@${REMOTE_HOST} \
+                            "cd ${PROJECT_DIR} && spark-submit \
+                            --master yarn \
+                            --deploy-mode client \
+                            --num-executors ${NUM_EXECUTORS} \
+                            --executor-memory ${EXECUTOR_MEMORY} \
+                            --executor-cores ${EXECUTOR_CORES} \
+                            --conf spark.yarn.submit.waitAppCompletion=true \
+                            --conf spark.yarn.queue=default \
+                            --conf spark.yarn.am.memory=512m \
+                            --conf spark.yarn.am.cores=1 \
+                            --conf spark.network.timeout=120s \
+                            --conf spark.executor.heartbeatInterval=20s \
+                            src/spark/${SPARK_SCRIPT}" 2>&1 | \
+                            tee /tmp/spark_output.log | \
+                            grep -E "INFO|WARN|ERROR|completed|failed|stage|task|application_" | \
+                            grep -v "ITC Big Data Lab" || true
+
+                        echo ""
+                        echo "✓ Spark job execution completed"
+                    '''
+                }
             }
         }
 
         stage('Verify Results') {
             steps {
                 echo '========================================='
-                echo 'Stage 6: Verify Spark Output'
+                echo 'Stage 7: Verify Spark Output'
                 echo '========================================='
                 sh '''
                     echo "Checking HDFS output directory..."
