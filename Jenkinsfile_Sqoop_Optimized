@@ -1,0 +1,305 @@
+// Jenkinsfile for PostgreSQL to HDFS via Sqoop - MEMORY OPTIMIZED
+// Fixed for low-memory environments after crypto miner removal
+
+pipeline {
+    agent any
+
+    parameters {
+        choice(
+            name: 'TABLE_NAME',
+            choices: [
+                'dim_networks',
+                'dim_lines',
+                'dim_stations',
+                'dim_date',
+                'fact_station_lines',
+                'fact_passenger_entry_exit',
+                'ALL_TABLES'
+            ],
+            description: 'Select which table to import'
+        )
+        choice(
+            name: 'MEMORY_PROFILE',
+            choices: ['minimal', 'standard'],
+            description: 'Memory allocation profile'
+        )
+    }
+
+    environment {
+        // PostgreSQL Database (on separate server)
+        DB_HOST = '13.42.152.118'
+        DB_PORT = '5432'
+        DB_NAME = 'testdb'
+        DB_USER = 'admin'
+        DB_PASSWORD = 'admin123'
+
+        // Cloudera Cluster
+        REMOTE_HOST = '13.41.167.97'
+        REMOTE_USER = 'consultant'
+        REMOTE_PASSWORD = 'WelcomeItc@2026'
+
+        // HDFS Target
+        HDFS_BASE = '/user/uttam/tfl_warehouse'
+
+        // Memory profiles (optimized after malware removal)
+        MINIMAL_MAPPERS = '1'
+        MINIMAL_HEAP = '512m'
+
+        STANDARD_MAPPERS = '2'
+        STANDARD_HEAP = '1g'
+    }
+
+    stages {
+        stage('Setup') {
+            steps {
+                script {
+                    // Set resources based on profile
+                    if (params.MEMORY_PROFILE == 'minimal') {
+                        env.NUM_MAPPERS = env.MINIMAL_MAPPERS
+                        env.JAVA_HEAP = env.MINIMAL_HEAP
+                    } else {
+                        env.NUM_MAPPERS = env.STANDARD_MAPPERS
+                        env.JAVA_HEAP = env.STANDARD_HEAP
+                    }
+                }
+
+                echo '========================================='
+                echo 'TfL PostgreSQL → HDFS Sqoop Pipeline'
+                echo '========================================='
+                echo "Table: ${params.TABLE_NAME}"
+                echo "Profile: ${params.MEMORY_PROFILE}"
+                echo "Mappers: ${env.NUM_MAPPERS}"
+                echo "Java Heap: ${env.JAVA_HEAP}"
+                echo "Database: ${DB_HOST}:${DB_PORT}/${DB_NAME}"
+                echo "HDFS: ${HDFS_BASE}"
+                echo '========================================='
+            }
+        }
+
+        stage('Checkout') {
+            steps {
+                echo '========================================='
+                echo 'Stage 1: Git Checkout'
+                echo '========================================='
+                checkout scm
+                sh 'git log -1 --oneline'
+            }
+        }
+
+        stage('Pre-flight Checks') {
+            steps {
+                echo '========================================='
+                echo 'Stage 2: Pre-flight System Checks'
+                echo '========================================='
+                sh '''
+                    echo "Checking Cloudera connectivity..."
+                    sshpass -p "${REMOTE_PASSWORD}" ssh -o StrictHostKeyChecking=no \
+                        -o ConnectTimeout=10 -o UserKnownHostsFile=/dev/null \
+                        ${REMOTE_USER}@${REMOTE_HOST} "hostname" || \
+                        { echo "ERROR: Cannot connect to Cloudera"; exit 1; }
+
+                    echo ""
+                    echo "Checking available memory..."
+                    MEM_AVAILABLE=$(sshpass -p "${REMOTE_PASSWORD}" ssh -o StrictHostKeyChecking=no \
+                        -o UserKnownHostsFile=/dev/null ${REMOTE_USER}@${REMOTE_HOST} \
+                        "free -m | awk 'NR==2 {print \\$7}'")
+
+                    echo "Available memory: ${MEM_AVAILABLE} MB"
+
+                    if [ "$MEM_AVAILABLE" -lt 5000 ]; then
+                        echo "⚠ WARNING: Low memory (< 5 GB available)"
+                        echo "Recommendation: Use 'minimal' profile or clean up processes"
+                        exit 1
+                    else
+                        echo "✓ Memory looks good"
+                    fi
+
+                    echo ""
+                    echo "Checking PostgreSQL connectivity..."
+                    sshpass -p "${REMOTE_PASSWORD}" ssh -o StrictHostKeyChecking=no \
+                        -o UserKnownHostsFile=/dev/null ${REMOTE_USER}@${REMOTE_HOST} \
+                        "timeout 5 nc -z ${DB_HOST} ${DB_PORT}" && \
+                        echo "✓ PostgreSQL reachable" || \
+                        { echo "ERROR: Cannot reach PostgreSQL at ${DB_HOST}:${DB_PORT}"; exit 1; }
+
+                    echo ""
+                    echo "Checking YARN NodeManager..."
+                    sshpass -p "${REMOTE_PASSWORD}" ssh -o StrictHostKeyChecking=no \
+                        -o UserKnownHostsFile=/dev/null ${REMOTE_USER}@${REMOTE_HOST} \
+                        "yarn node -list 2>&1 | grep -E 'Total Nodes|RUNNING' | head -2" || true
+
+                    echo ""
+                    echo "✓ Pre-flight checks complete"
+                '''
+            }
+        }
+
+        stage('Sqoop Import') {
+            steps {
+                echo '========================================='
+                echo 'Stage 3: Execute Sqoop Import'
+                echo '========================================='
+
+                script {
+                    if (params.TABLE_NAME == 'ALL_TABLES') {
+                        // Import all tables sequentially
+                        def tables = [
+                            'dim_networks',
+                            'dim_lines',
+                            'dim_stations',
+                            'dim_date',
+                            'fact_station_lines',
+                            'fact_passenger_entry_exit'
+                        ]
+
+                        tables.each { table ->
+                            echo "Importing ${table}..."
+                            sh """
+                                sshpass -p "${REMOTE_PASSWORD}" ssh -o StrictHostKeyChecking=no \
+                                    -o UserKnownHostsFile=/dev/null ${REMOTE_USER}@${REMOTE_HOST} \
+                                    "export HADOOP_OPTS='-Xmx${JAVA_HEAP} -Xms${JAVA_HEAP}' && \
+                                    sqoop import \
+                                      --connect jdbc:postgresql://${DB_HOST}:${DB_PORT}/${DB_NAME} \
+                                      --username ${DB_USER} \
+                                      --password ${DB_PASSWORD} \
+                                      --table ${table} \
+                                      --target-dir ${HDFS_BASE}/${table} \
+                                      --num-mappers ${NUM_MAPPERS} \
+                                      --delete-target-dir \
+                                      --verbose" 2>&1 | \
+                                    grep -E 'INFO|WARN|ERROR|completed|Records|map|reduce' || true
+                            """
+                            echo "✓ ${table} imported"
+                            echo ""
+                        }
+                    } else {
+                        // Import single table
+                        sh '''
+                            echo "Importing ${TABLE_NAME}..."
+
+                            sshpass -p "${REMOTE_PASSWORD}" ssh -o StrictHostKeyChecking=no \
+                                -o UserKnownHostsFile=/dev/null ${REMOTE_USER}@${REMOTE_HOST} \
+                                "export HADOOP_OPTS='-Xmx${JAVA_HEAP} -Xms${JAVA_HEAP}' && \
+                                sqoop import \
+                                  --connect jdbc:postgresql://${DB_HOST}:${DB_PORT}/${DB_NAME} \
+                                  --username ${DB_USER} \
+                                  --password ${DB_PASSWORD} \
+                                  --table ${TABLE_NAME} \
+                                  --target-dir ${HDFS_BASE}/${TABLE_NAME} \
+                                  --num-mappers ${NUM_MAPPERS} \
+                                  --delete-target-dir \
+                                  --verbose" 2>&1 | \
+                                tee /tmp/sqoop_output.log | \
+                                grep -E 'INFO|WARN|ERROR|completed|Records|map|reduce' || true
+
+                            echo ""
+                            echo "✓ ${TABLE_NAME} imported successfully"
+                        '''
+                    }
+                }
+            }
+        }
+
+        stage('Verify Import') {
+            steps {
+                echo '========================================='
+                echo 'Stage 4: Verify HDFS Import'
+                echo '========================================='
+                sh '''
+                    echo "Checking HDFS directories..."
+
+                    if [ "${TABLE_NAME}" = "ALL_TABLES" ]; then
+                        for table in dim_networks dim_lines dim_stations dim_date fact_station_lines fact_passenger_entry_exit; do
+                            echo ""
+                            echo "Table: $table"
+                            sshpass -p "${REMOTE_PASSWORD}" ssh -o StrictHostKeyChecking=no \
+                                -o UserKnownHostsFile=/dev/null ${REMOTE_USER}@${REMOTE_HOST} \
+                                "hdfs dfs -ls ${HDFS_BASE}/$table 2>&1 | head -10" || echo "⚠ Not found"
+                        done
+                    else
+                        echo "Table: ${TABLE_NAME}"
+                        sshpass -p "${REMOTE_PASSWORD}" ssh -o StrictHostKeyChecking=no \
+                            -o UserKnownHostsFile=/dev/null ${REMOTE_USER}@${REMOTE_HOST} \
+                            "hdfs dfs -ls ${HDFS_BASE}/${TABLE_NAME} 2>&1" || echo "⚠ Not found"
+
+                        echo ""
+                        echo "Sample records (first 5):"
+                        sshpass -p "${REMOTE_PASSWORD}" ssh -o StrictHostKeyChecking=no \
+                            -o UserKnownHostsFile=/dev/null ${REMOTE_USER}@${REMOTE_HOST} \
+                            "hdfs dfs -cat ${HDFS_BASE}/${TABLE_NAME}/part-m-00000 2>/dev/null | head -5" || \
+                            echo "⚠ Could not read data"
+                    fi
+
+                    echo ""
+                    echo "✓ Verification complete"
+                '''
+            }
+        }
+
+        stage('Record Count') {
+            steps {
+                echo '========================================='
+                echo 'Stage 5: Count Records'
+                echo '========================================='
+                sh '''
+                    echo "Counting records in HDFS..."
+                    echo ""
+
+                    if [ "${TABLE_NAME}" = "ALL_TABLES" ]; then
+                        for table in dim_networks dim_lines dim_stations dim_date fact_station_lines fact_passenger_entry_exit; do
+                            COUNT=$(sshpass -p "${REMOTE_PASSWORD}" ssh -o StrictHostKeyChecking=no \
+                                -o UserKnownHostsFile=/dev/null ${REMOTE_USER}@${REMOTE_HOST} \
+                                "hdfs dfs -cat ${HDFS_BASE}/$table/part-m-* 2>/dev/null | wc -l" || echo "0")
+                            echo "$table: $COUNT records"
+                        done
+                    else
+                        COUNT=$(sshpass -p "${REMOTE_PASSWORD}" ssh -o StrictHostKeyChecking=no \
+                            -o UserKnownHostsFile=/dev/null ${REMOTE_USER}@${REMOTE_HOST} \
+                            "hdfs dfs -cat ${HDFS_BASE}/${TABLE_NAME}/part-m-* 2>/dev/null | wc -l" || echo "0")
+                        echo "${TABLE_NAME}: $COUNT records"
+                    fi
+                '''
+            }
+        }
+    }
+
+    post {
+        success {
+            echo '========================================='
+            echo '✓✓✓ SQOOP IMPORT COMPLETED SUCCESSFULLY ✓✓✓'
+            echo '========================================='
+            echo "Table(s): ${params.TABLE_NAME}"
+            echo "Profile: ${params.MEMORY_PROFILE}"
+            echo "Mappers: ${env.NUM_MAPPERS}"
+            echo "HDFS Location: ${HDFS_BASE}"
+            echo ""
+            echo "Next Steps:"
+            echo "  1. Query data with Hive: http://${REMOTE_HOST}:8888"
+            echo "  2. Create Hive external tables"
+            echo "  3. Run analytics queries"
+            echo '========================================='
+        }
+        failure {
+            echo '========================================='
+            echo '✗✗✗ SQOOP IMPORT FAILED ✗✗✗'
+            echo '========================================='
+            echo "Table: ${params.TABLE_NAME}"
+            echo "Profile: ${params.MEMORY_PROFILE}"
+            echo ""
+            echo "Common issues:"
+            echo "  1. Low memory - Check: free -h on ${REMOTE_HOST}"
+            echo "  2. Database connectivity - Check: nc -z ${DB_HOST} ${DB_PORT}"
+            echo "  3. Table not found - Verify table exists in PostgreSQL"
+            echo "  4. YARN stuck - Check: yarn node -list"
+            echo ""
+            echo "Troubleshooting:"
+            echo "  - Use 'minimal' profile for low memory"
+            echo "  - Check /tmp/sqoop_output.log for details"
+            echo "  - Verify PostgreSQL tables: psql -h ${DB_HOST} -U ${DB_USER} -d ${DB_NAME} -c '\\dt'"
+            echo '========================================='
+        }
+        always {
+            echo 'Pipeline execution completed'
+        }
+    }
+}
