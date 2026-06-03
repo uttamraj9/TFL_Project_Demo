@@ -198,28 +198,28 @@ pipeline {
                         echo ""
 
                         # Create a script to run Spark job
-                        cat > /tmp/spark_job_${BUILD_NUMBER}.sh << 'SPARK_EOF'
+                        cat > /tmp/spark_job_${BUILD_NUMBER}.sh << SPARK_EOF
 #!/bin/bash
 cd ${PROJECT_DIR}
 
 # Set Spark environment
 export SPARK_HOME=/opt/cloudera/parcels/CDH/lib/spark
-export PATH=$SPARK_HOME/bin:$PATH
+export PATH=\$SPARK_HOME/bin:\$PATH
 
 # Run spark-submit
-spark-submit \
-  --master yarn \
-  --deploy-mode client \
-  --num-executors ${NUM_EXECUTORS} \
-  --executor-memory ${EXECUTOR_MEMORY} \
-  --executor-cores ${EXECUTOR_CORES} \
-  --driver-memory 512M \
-  --conf spark.yarn.am.memory=512m \
-  --conf spark.yarn.am.cores=1 \
-  --conf spark.network.timeout=300s \
-  --conf spark.executor.heartbeatInterval=30s \
-  --conf spark.dynamicAllocation.enabled=false \
-  --conf spark.shuffle.service.enabled=false \
+spark-submit \\
+  --master yarn \\
+  --deploy-mode client \\
+  --num-executors ${NUM_EXECUTORS} \\
+  --executor-memory ${EXECUTOR_MEMORY} \\
+  --executor-cores ${EXECUTOR_CORES} \\
+  --driver-memory 512M \\
+  --conf spark.yarn.am.memory=512m \\
+  --conf spark.yarn.am.cores=1 \\
+  --conf spark.network.timeout=300s \\
+  --conf spark.executor.heartbeatInterval=30s \\
+  --conf spark.dynamicAllocation.enabled=false \\
+  --conf spark.shuffle.service.enabled=false \\
   src/spark/${SPARK_SCRIPT}
 SPARK_EOF
 
