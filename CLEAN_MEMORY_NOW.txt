@@ -1,0 +1,213 @@
+╔════════════════════════════════════════════════════════════════════╗
+║       URGENT: Cloudera Memory Cleanup Commands                     ║
+║       Current: 466 MB available (out of 32 GB!)                    ║
+╚════════════════════════════════════════════════════════════════════╝
+
+You are already SSH'd into Cloudera as consultant user.
+Run these commands IN ORDER:
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+📋 STEP 1: Kill All Stuck YARN Applications
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+# List all running/stuck applications:
+yarn application -list -appStates ACCEPTED,RUNNING
+
+# Kill ALL of them:
+for app in $(yarn application -list -appStates ACCEPTED,RUNNING 2>/dev/null | grep 'application_' | awk '{print $1}'); do
+    echo "Killing $app..."
+    yarn application -kill $app
+done
+
+# Verify they're gone:
+yarn application -list -appStates ACCEPTED,RUNNING
+# Should show: "Total number of applications (application-types: [], states: [ACCEPTED, RUNNING]): 0"
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+📋 STEP 2: Clear System Caches (Requires Root)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+# Switch to root or use sudo:
+sudo su -
+
+# Drop caches:
+sync
+echo 3 > /proc/sys/vm/drop_caches
+
+# Exit back to consultant user:
+exit
+
+# Check memory now:
+free -h
+# Should see improvement in "available" column
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+📋 STEP 3: Check What's Using Memory
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+# Show top memory consumers:
+ps aux --sort=-%mem | head -20
+
+# Look for:
+# - Multiple java processes (Hadoop daemons)
+# - Stuck Spark executors
+# - Zombie processes
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+📋 STEP 4: Restart YARN NodeManager (Recommended)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Option A: Via Cloudera Manager UI (EASIEST)
+──────────────────────────────────────────
+1. Open browser: http://13.41.167.97:7180/
+2. Login: Admin / Admin@2026
+3. Click: Clusters > Cluster 1 > YARN
+4. Click: Actions dropdown > Restart
+5. Click: Restart (confirm)
+6. Wait 2-3 minutes
+7. Check status: Should show green checkmark
+
+Option B: Via Command Line (IF AVAILABLE)
+──────────────────────────────────────────
+# Check if systemctl/service commands work:
+sudo systemctl restart hadoop-yarn-nodemanager
+# or
+sudo service hadoop-yarn-nodemanager restart
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+📋 STEP 5: Verify YARN is Ready
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+# Check NodeManager:
+yarn node -list
+
+# Should show:
+# Total Nodes: 1
+# Node-Id                     Node-State
+# localhost:8041              RUNNING
+
+# Check YARN capacity:
+yarn node -status localhost:8041
+
+# Should show available memory (MB) and vcores
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+📋 STEP 6: Check Memory Again
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+free -h
+
+# Target: At least 2-4 GB available
+# If still low (< 1 GB), reboot the server:
+#   sudo reboot
+# Then wait 5 minutes and SSH back in
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+📋 STEP 7: Test Spark Job (Small Test First)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+# Go to project directory:
+cd /home/consultant/uttam/TFL_Project_Demo
+
+# Run with MINIMAL resources (test):
+spark-submit \
+  --master yarn \
+  --deploy-mode client \
+  --num-executors 1 \
+  --executor-memory 512M \
+  --executor-cores 1 \
+  --driver-memory 512M \
+  --conf spark.yarn.am.memory=512m \
+  src/spark/simple_spark_wordcount.py
+
+# Should complete in 1-2 minutes if memory is freed
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+📋 STEP 8: If Successful, Run with More Resources
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+# Once test works, scale up:
+spark-submit \
+  --master yarn \
+  --deploy-mode client \
+  --num-executors 2 \
+  --executor-memory 2G \
+  --executor-cores 2 \
+  --driver-memory 1G \
+  --conf spark.yarn.am.memory=1G \
+  --conf spark.yarn.am.cores=1 \
+  src/spark/simple_spark_wordcount.py
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+🎯 QUICK SUMMARY - Copy/Paste These Commands
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+# Kill YARN apps:
+for app in $(yarn application -list -appStates ACCEPTED,RUNNING 2>/dev/null | grep 'application_' | awk '{print $1}'); do yarn application -kill $app; done
+
+# Clear caches (as root):
+sudo sh -c 'sync && echo 3 > /proc/sys/vm/drop_caches'
+
+# Check memory:
+free -h
+
+# If still low, restart YARN via Cloudera Manager:
+# http://13.41.167.97:7180/ → YARN → Actions → Restart
+
+# Test Spark:
+cd /home/consultant/uttam/TFL_Project_Demo && \
+spark-submit --master yarn --deploy-mode client \
+  --num-executors 1 --executor-memory 512M --executor-cores 1 \
+  --driver-memory 512M --conf spark.yarn.am.memory=512m \
+  src/spark/simple_spark_wordcount.py
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+⚠️ IF NOTHING WORKS: REBOOT SERVER
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+As root:
+  sudo reboot
+
+Wait 5-10 minutes, then SSH back in:
+  ssh -i ~/Downloads/Training/test_key.pem ec2-user@13.41.167.97
+
+Check services in Cloudera Manager:
+  http://13.41.167.97:7180/
+
+All services should be green (may need to start them manually)
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+📊 EXPECTED RESULTS AFTER CLEANUP
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+BEFORE:
+  Mem: 31886 total, 30537 used, 428 free, 466 available  ◄── BAD
+
+AFTER (Target):
+  Mem: 31886 total, 27000 used, 3000 free, 4000 available  ◄── GOOD
+
+YARN:
+  Total Nodes: 1
+  Node-State: RUNNING
+  Available Memory: 8192 MB (or more)
+
+Spark Job:
+  INFO yarn.Client: Application report (state: RUNNING)  ◄── Not ACCEPTED!
+  Completed in 1-2 minutes
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Created: June 3, 2026
+Issue: Only 466 MB available (out of 32 GB)
+Priority: URGENT - Blocking all Spark jobs
