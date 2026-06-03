@@ -20,7 +20,7 @@ CREATE EXTERNAL TABLE IF NOT EXISTS dim_networks (
 ROW FORMAT DELIMITED
 FIELDS TERMINATED BY ','
 STORED AS TEXTFILE
-LOCATION '/user/uttam/tfl_warehouse/dim_networks'
+LOCATION '/tmp/uttam/tfl_data/dim_networks'
 TBLPROPERTIES ('skip.header.line.count'='1');
 
 -- Dimension Table: Lines
@@ -33,7 +33,7 @@ CREATE EXTERNAL TABLE IF NOT EXISTS dim_lines (
 ROW FORMAT DELIMITED
 FIELDS TERMINATED BY ','
 STORED AS TEXTFILE
-LOCATION '/user/uttam/tfl_warehouse/dim_lines'
+LOCATION '/tmp/uttam/tfl_data/dim_lines'
 TBLPROPERTIES ('skip.header.line.count'='1');
 
 -- Dimension Table: Stations
@@ -50,7 +50,7 @@ CREATE EXTERNAL TABLE IF NOT EXISTS dim_stations (
 ROW FORMAT DELIMITED
 FIELDS TERMINATED BY ','
 STORED AS TEXTFILE
-LOCATION '/user/uttam/tfl_warehouse/dim_stations'
+LOCATION '/tmp/uttam/tfl_data/dim_stations'
 TBLPROPERTIES ('skip.header.line.count'='1');
 
 -- Dimension Table: Date
@@ -62,7 +62,7 @@ CREATE EXTERNAL TABLE IF NOT EXISTS dim_date (
 ROW FORMAT DELIMITED
 FIELDS TERMINATED BY ','
 STORED AS TEXTFILE
-LOCATION '/user/uttam/tfl_warehouse/dim_date'
+LOCATION '/tmp/uttam/tfl_data/dim_date'
 TBLPROPERTIES ('skip.header.line.count'='1');
 
 -- Bridge Table: Station Lines
@@ -77,7 +77,7 @@ CREATE EXTERNAL TABLE IF NOT EXISTS fact_station_lines (
 ROW FORMAT DELIMITED
 FIELDS TERMINATED BY ','
 STORED AS TEXTFILE
-LOCATION '/user/uttam/tfl_warehouse/fact_station_lines'
+LOCATION '/tmp/uttam/tfl_data/fact_station_lines'
 TBLPROPERTIES ('skip.header.line.count'='1');
 
 -- Fact Table: Passenger Entry Exit
@@ -90,7 +90,7 @@ CREATE EXTERNAL TABLE IF NOT EXISTS fact_passenger_entry_exit (
 ROW FORMAT DELIMITED
 FIELDS TERMINATED BY ','
 STORED AS TEXTFILE
-LOCATION '/user/uttam/tfl_warehouse/fact_passenger_entry_exit'
+LOCATION '/tmp/uttam/tfl_data/fact_passenger_entry_exit'
 TBLPROPERTIES ('skip.header.line.count'='1');
 
 -- Show all tables
