@@ -1,0 +1,286 @@
+╔═══════════════════════════════════════════════════════════════════════╗
+║         Cloudera Manager API - Automated Fix                          ║
+║         Run from YOUR LAPTOP (Not on Cloudera server!)                ║
+╚═══════════════════════════════════════════════════════════════════════╝
+
+📋 THREE SCRIPTS AVAILABLE
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+1️⃣  COMPLETE FIX (RECOMMENDED - ALL-IN-ONE)
+   ────────────────────────────────────────
+   ./fix_cloudera_complete.sh
+
+   Does everything automatically:
+   ✓ Kills stuck YARN applications
+   ✓ Clears system caches
+   ✓ Configures YARN memory (20 GB for containers)
+   ✓ Restarts YARN service
+   ✓ Tests Spark job
+   ✓ Triggers Jenkins pipeline
+
+   Duration: ~5 minutes
+   No interaction needed!
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+2️⃣  QUICK CLEANUP ONLY
+   ───────────────────
+   ./cloudera_api_cleanup.sh
+
+   For quick fixes:
+   ✓ Kill apps + clear cache + restart NodeManager
+   ✓ Test Spark job
+   ✗ Does NOT reconfigure YARN memory
+
+   Duration: ~3 minutes
+   Use when you just need to free up memory
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+3️⃣  YARN CONFIGURATION ONLY
+   ────────────────────────
+   ./cloudera_api_configure_yarn.sh
+
+   Optimizes YARN settings:
+   ✓ Sets NodeManager to 20 GB
+   ✓ Max container: 8 GB
+   ✓ Restarts YARN service
+
+   Duration: ~4 minutes
+   Interactive: Asks for confirmation
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+🎯 QUICK START (ONE COMMAND)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+From your laptop terminal:
+
+cd ~/Downloads/TFL_Project_Demo
+./fix_cloudera_complete.sh
+
+That's it! The script will:
+1. Connect to Cloudera Manager API
+2. Clean up memory and apps
+3. Optimize YARN configuration
+4. Restart services
+5. Test everything
+6. Start Jenkins pipeline
+
+Just sit back and watch! ☕
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+📊 WHAT THE SCRIPT FIXES
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+BEFORE (Current Problem):
+┌──────────────────────────────────────────────────────────────┐
+│ Memory:  32 GB total, 30.5 GB used, 466 MB available  ◄── BAD  │
+│ YARN:    Can't allocate containers (out of memory)           │
+│ Spark:   Jobs stuck in ACCEPTED state forever                │
+│ Jenkins: Pipeline hangs with no output                       │
+└──────────────────────────────────────────────────────────────┘
+
+AFTER (Fixed):
+┌──────────────────────────────────────────────────────────────┐
+│ Memory:  32 GB total, 28 GB used, 4 GB available      ◄── GOOD │
+│ YARN:    20 GB available for containers                      │
+│ Spark:   Jobs run in YARN distributed mode                   │
+│ Jenkins: Pipeline completes in 2-3 minutes                   │
+└──────────────────────────────────────────────────────────────┘
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+🔧 WHAT EACH PHASE DOES
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Phase 1: Discovery
+  • Connects to CM API
+  • Finds cluster and YARN service
+  • Checks current memory
+
+Phase 2: Cleanup
+  • Kills stuck YARN apps via SSH
+  • Clears system caches (via sudo)
+  • Frees up 2-4 GB immediately
+
+Phase 3: YARN Configuration (via CM API)
+  • NodeManager memory: 20480 MB (20 GB)
+  • Max container: 8192 MB (8 GB)
+  • Min container: 512 MB
+  • CPU cores: 8 vcores
+
+Phase 4: YARN Restart (via CM API)
+  • Restarts entire YARN service
+  • Waits for health check (2-3 min)
+  • Verifies NodeManager is RUNNING
+
+Phase 5: Verification
+  • Checks YARN node status
+  • Runs test Spark job
+  • Verifies job completes
+
+Phase 6: Jenkins Integration
+  • Triggers Jenkins pipeline
+  • Returns build number
+  • Ready for monitoring
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+📈 EXPECTED OUTPUT
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+╔══════════════════════════════════════════════════════════════╗
+║                                                              ║
+║   Cloudera Cluster Complete Fix & Optimization              ║
+║   Using Cloudera Manager API                                ║
+║                                                              ║
+╚══════════════════════════════════════════════════════════════╝
+
+PHASE 1: Discovery & Health Check
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+→ Discovering cluster...
+  ✓ Cluster: Cluster 1
+→ Finding YARN service...
+  ✓ YARN: yarn
+→ Checking memory status...
+  Mem: 31886 total, 30537 used, 428 free, 466 available
+
+PHASE 2: Memory & Application Cleanup
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+→ Killing stuck YARN applications...
+  Killing application_1778572939149_0244...
+  ✓ YARN applications cleaned
+→ Clearing system caches...
+  ✓ System caches cleared
+→ Memory after cleanup:
+  Mem: 31886 total, 28000 used, 2500 free, 3500 available
+
+PHASE 3: YARN Memory Configuration
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+→ Getting NodeManager role...
+  ✓ NodeManager: yarn-NODEMANAGER-xxx
+→ Updating YARN configuration via CM API...
+  ✓ Configuration updated
+
+PHASE 4: YARN Service Restart
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+→ Restarting YARN service...
+  Command ID: 12345
+  Waiting for restart (2-3 minutes)...
+  ✓ YARN restarted
+→ Waiting for YARN to be healthy...
+  ✓ YARN is healthy!
+
+PHASE 5: Verification & Testing
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+→ Checking YARN node status...
+  Total Nodes: 1
+  Node-State: RUNNING
+→ Testing Spark job (minimal resources)...
+  ✓ Spark test successful!
+
+PHASE 6: Trigger Jenkins Pipeline
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+→ Authenticating with Jenkins...
+  ✓ Jenkins authenticated
+→ Triggering Spark pipeline...
+  ✓ Pipeline triggered (Build #15)
+
+╔══════════════════════════════════════════════════════════════╗
+║                                                              ║
+║              ✓✓✓ ALL PHASES COMPLETE ✓✓✓                    ║
+║                                                              ║
+╚══════════════════════════════════════════════════════════════╝
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+🌐 ACCESS URLS
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Cloudera Manager:
+  http://13.41.167.97:7180/
+  User: Admin | Pass: Admin@2026
+
+YARN ResourceManager:
+  http://13.41.167.97:8088/
+
+Jenkins Pipeline:
+  http://51.24.13.205:8081/job/TfL_Spark_Pipeline/lastBuild/console
+
+Cloudera Manager API Docs:
+  http://13.41.167.97:7180/static/apidocs/index.html
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+❓ TROUBLESHOOTING
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Issue: "Could not get cluster name"
+  → Check CM is accessible: curl http://13.41.167.97:7180/
+  → Verify credentials: Admin / Admin@2026
+
+Issue: "Failed to restart YARN"
+  → Check CM UI: http://13.41.167.97:7180/
+  → Manual restart: Clusters > YARN > Actions > Restart
+
+Issue: "Spark test failed"
+  → Check YARN logs: yarn logs -applicationId <app-id>
+  → Check memory: ssh consultant@13.41.167.97 'free -h'
+
+Issue: "Jenkins authentication failed"
+  → Verify Jenkins is up: http://51.24.13.205:8081/
+  → Check credentials: consultant / WelcomeItc@2026
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+✅ SUCCESS CRITERIA
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+After running the script, you should have:
+
+✓ Memory: 3-4 GB available (was 466 MB)
+✓ YARN: NodeManager RUNNING with 20 GB capacity
+✓ Spark: Test job completes in 1-2 minutes
+✓ Jenkins: Pipeline running (Build #X)
+
+Check Jenkins console output:
+  Should show stages progressing (not stuck)
+  Should complete in 2-3 minutes
+  Should end with: ✓✓✓ PIPELINE COMPLETED SUCCESSFULLY
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+📚 RELATED DOCUMENTATION
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+CLEAN_MEMORY_NOW.txt          Manual commands (if script fails)
+IMMEDIATE_FIX.md              Quick fix guide
+cloudera_api_cleanup.sh       Cleanup-only script
+cloudera_api_configure_yarn.sh YARN config script
+fix_cloudera_complete.sh      This master script
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+🎉 SUMMARY
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Instead of:
+  • Logging into Cloudera Manager UI
+  • Manually clicking through menus
+  • Restarting services one by one
+  • Testing manually
+  • Triggering Jenkins manually
+
+You now have ONE COMMAND:
+  ./fix_cloudera_complete.sh
+
+That does EVERYTHING automatically using the Cloudera Manager API!
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Created: June 3, 2026
+Script: fix_cloudera_complete.sh
+Status: Ready to run ✅
+Duration: ~5 minutes

@@ -36,7 +36,8 @@ BLUE='\033[0;34m'
 CYAN='\033[0;36m'
 NC='\033[0m'
 
-clear
+# Clear screen (skip if TERM not set)
+[ -n "$TERM" ] && clear || echo ""
 echo -e "${CYAN}"
 cat << "EOF"
 ╔══════════════════════════════════════════════════════════════╗
