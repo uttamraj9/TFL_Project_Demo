@@ -1,0 +1,301 @@
+╔═══════════════════════════════════════════════════════════════════════╗
+║                  CLOUDERA CLUSTER DOWN - RECOVERY GUIDE                ║
+║                  Use this when cluster goes down                        ║
+╚═══════════════════════════════════════════════════════════════════════╝
+
+🚨 SYMPTOMS
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+• Cloudera Manager UI not loading (http://13.41.167.97:7180/)
+• Jenkins Spark pipeline failing with connection errors
+• Cannot SSH to cluster
+• Services showing as "stopped" or "unknown"
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+🔧 OPTION 1: AUTOMATED RECOVERY (RECOMMENDED)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+From your laptop:
+
+cd ~/Downloads/TFL_Project_Demo
+./restart_cloudera_cluster.sh
+
+This script will:
+✓ Check server connectivity
+✓ Test SSH access
+✓ Start Cloudera Manager if down
+✓ Start cluster services (HDFS, YARN, etc.)
+✓ Verify YARN NodeManager
+✓ Check memory status
+✓ Provide status summary
+
+Duration: 5-10 minutes (services take time to start)
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+🔧 OPTION 2: MANUAL RECOVERY VIA UI
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Step 1: Check Server Status
+────────────────────────────
+# From terminal:
+ping 13.41.167.97
+
+If no response:
+  → Check AWS EC2 console
+  → Instance may be stopped
+  → Start instance and wait 2-3 minutes
+
+Step 2: Access Cloudera Manager
+────────────────────────────────
+URL: http://13.41.167.97:7180/
+User: Admin
+Password: Admin@2026
+
+If page doesn't load:
+  → Wait 2-3 minutes after server boot
+  → CM service may need manual start (see Step 3)
+
+Step 3: Start Cloudera Manager Service (if needed)
+───────────────────────────────────────────────────
+# SSH to server:
+ssh -i ~/Downloads/Training/test_key.pem ec2-user@13.41.167.97
+
+# Check CM status:
+sudo systemctl status cloudera-scm-server
+
+# Start if stopped:
+sudo systemctl start cloudera-scm-server
+
+# Wait 2-3 minutes, then check:
+sudo systemctl status cloudera-scm-server
+# Should show: "active (running)"
+
+# Access UI again:
+http://13.41.167.97:7180/
+
+Step 4: Start Cluster Services
+───────────────────────────────
+In Cloudera Manager UI:
+
+1. Click on cluster name (usually "Cluster 1")
+2. Look at service status:
+   • HDFS - Should be green
+   • YARN - Should be green
+   • Hive - Should be green
+   • HBase - Should be green
+
+3. If services are red/stopped:
+   Click: Actions → Start
+
+4. Wait 5-10 minutes for all services to start
+
+5. Services should turn green
+
+Step 5: Verify YARN
+───────────────────
+# SSH to server:
+ssh -i ~/Downloads/Training/test_key.pem ec2-user@13.41.167.97
+sudo su - consultant
+
+# Check YARN:
+yarn node -list
+
+Should show:
+  Total Nodes: 1
+  Node-Id: localhost:8041
+  Node-State: RUNNING
+
+If not running:
+  • Wait 2-3 more minutes
+  • Or restart YARN via CM UI
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+🔧 OPTION 3: HARD REBOOT (LAST RESORT)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+If nothing else works:
+
+Method A: Via SSH
+─────────────────
+ssh -i ~/Downloads/Training/test_key.pem ec2-user@13.41.167.97
+sudo reboot
+
+Method B: Via AWS EC2 Console
+──────────────────────────────
+1. Go to AWS EC2 console
+2. Find instance: 13.41.167.97
+3. Actions → Instance State → Reboot
+4. Wait 5-10 minutes
+
+After Reboot:
+─────────────
+1. Wait 2-3 minutes for boot
+2. Test SSH: ssh -i ~/Downloads/Training/test_key.pem ec2-user@13.41.167.97
+3. Access CM: http://13.41.167.97:7180/
+4. All services should auto-start
+5. If not, manually start cluster (Option 2, Step 4)
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+📋 VERIFICATION CHECKLIST
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+After recovery, verify everything is working:
+
+✓ Server Connectivity
+  □ ping 13.41.167.97 (responds)
+  □ SSH works (can login)
+
+✓ Cloudera Manager
+  □ UI loads: http://13.41.167.97:7180/
+  □ Can login (Admin / Admin@2026)
+  □ Dashboard shows cluster
+
+✓ Services Status (all green in CM)
+  □ HDFS - Started
+  □ YARN - Started
+  □ Hive - Started
+  □ HBase - Started
+
+✓ YARN NodeManager
+  □ yarn node -list shows 1 node RUNNING
+  □ YARN RM UI loads: http://13.41.167.97:8088/
+
+✓ Memory
+  □ free -h shows > 1 GB available
+  □ If low, run: ./cloudera_api_cleanup.sh
+
+✓ Jenkins Pipeline
+  □ Trigger test build
+  □ Pre-flight checks pass
+  □ Spark job completes
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+⏱️ TYPICAL RECOVERY TIMELINE
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+00:00 - Start recovery script or manual process
+00:30 - Server responds to ping
+01:00 - SSH access working
+02:00 - Cloudera Manager UI loads
+03:00 - CM service fully started
+05:00 - Cluster services starting
+08:00 - HDFS started
+10:00 - YARN started
+12:00 - All services green
+15:00 - Ready for Spark jobs
+
+Total: 10-15 minutes from cold start
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+🔍 TROUBLESHOOTING
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Problem: Server doesn't respond to ping
+Solution: Check EC2 instance status in AWS console, start if stopped
+
+Problem: SSH timeout
+Solution: Wait 2-3 minutes, server may still be booting
+
+Problem: CM UI loads but shows "Bad Gateway"
+Solution: CM service not ready, wait 2 more minutes
+
+Problem: Services won't start
+Solution:
+  1. Check logs in CM: Diagnostics → Server Log
+  2. Check disk space: df -h (need > 10% free)
+  3. Restart individual service via CM UI
+
+Problem: YARN shows 0 nodes
+Solution:
+  1. Wait 2-3 minutes
+  2. Restart YARN: CM → YARN → Actions → Restart
+  3. Check NodeManager logs
+
+Problem: Memory still low after restart
+Solution: Run cleanup: ./cloudera_api_cleanup.sh
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+📞 EMERGENCY CONTACTS
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Cloudera Manager:
+  http://13.41.167.97:7180/
+  User: Admin | Pass: Admin@2026
+
+SSH Access:
+  ssh -i ~/Downloads/Training/test_key.pem ec2-user@13.41.167.97
+  User: ec2-user (switch to consultant with: sudo su - consultant)
+
+YARN ResourceManager:
+  http://13.41.167.97:8088/
+
+Jenkins:
+  http://51.24.13.205:8081/
+  User: consultant | Pass: WelcomeItc@2026
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+📚 RELATED SCRIPTS
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+restart_cloudera_cluster.sh     Automated recovery (use this first!)
+fix_cloudera_complete.sh         Full cleanup + optimization
+cloudera_api_cleanup.sh          Quick memory cleanup
+cloudera_api_configure_yarn.sh   YARN configuration
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+🎯 QUICK COMMANDS
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+# Test connectivity:
+ping 13.41.167.97
+
+# SSH to server:
+ssh -i ~/Downloads/Training/test_key.pem ec2-user@13.41.167.97
+
+# Check CM service:
+sudo systemctl status cloudera-scm-server
+
+# Start CM service:
+sudo systemctl start cloudera-scm-server
+
+# Check YARN:
+sudo su - consultant
+yarn node -list
+
+# Restart entire cluster:
+./restart_cloudera_cluster.sh
+
+# After cluster is up, clean memory:
+./cloudera_api_cleanup.sh
+
+# Then trigger Jenkins:
+http://51.24.13.205:8081/job/TfL_Spark_Pipeline/build
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+✅ SUCCESS INDICATORS
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+When recovery is complete:
+
+✓ CM UI loads instantly (no delay)
+✓ All services show green status
+✓ yarn node -list shows 1 RUNNING node
+✓ YARN RM UI shows active NodeManager
+✓ Memory > 1 GB available
+✓ Jenkins Spark pipeline runs successfully
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Created: June 3, 2026
+Purpose: Recover Cloudera cluster when down
+Status: Emergency recovery guide
