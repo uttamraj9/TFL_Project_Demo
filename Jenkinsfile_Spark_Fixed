@@ -232,8 +232,7 @@ SPARK_EOF
                         sshpass -p "${REMOTE_PASSWORD}" ssh -o StrictHostKeyChecking=no \
                             -o UserKnownHostsFile=/dev/null ${REMOTE_USER}@${REMOTE_HOST} \
                             "bash /tmp/spark_job_${BUILD_NUMBER}.sh 2>&1" | \
-                            tee /tmp/spark_output_${BUILD_NUMBER}.log | \
-                            grep -E "INFO|WARN|ERROR|completed|application_|stage|task" || true
+                            tee /tmp/spark_output_${BUILD_NUMBER}.log
 
                         # Check exit status
                         SPARK_EXIT=${PIPESTATUS[0]}
