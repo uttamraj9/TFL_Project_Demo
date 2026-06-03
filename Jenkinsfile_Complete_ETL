@@ -37,10 +37,14 @@ pipeline {
         PG_PASSWORD = 'admin123'
 
         // HDFS Paths
-        HDFS_BASE = '/user/consultant/tfl'
+        HDFS_BASE = '/tmp/uttam/tfl_data'
 
         // Hive Database
-        HIVE_DB = 'tfl_warehouse'
+        HIVE_DB = 'uttam_tfl'
+
+        // HiveServer2
+        HIVESERVER2_HOST = 'ip-172-31-12-74.eu-west-2.compute.internal'
+        HIVESERVER2_PORT = '10000'
 
         // Memory Settings (FIX for OOM error)
         HADOOP_CLIENT_OPTS = '-Xmx128m'
@@ -102,7 +106,7 @@ pipeline {
                     echo "Dropping Hive database..."
                     sshpass -p "${CLOUDERA_PASSWORD}" ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
                         ${CLOUDERA_USER}@${CLOUDERA_HOST} \
-                        "hive -e 'DROP DATABASE IF EXISTS ${HIVE_DB} CASCADE;'" 2>&1 | \
+                        "beeline -u 'jdbc:hive2://${HIVESERVER2_HOST}:${HIVESERVER2_PORT}/default' -e 'DROP DATABASE IF EXISTS ${HIVE_DB} CASCADE;'" 2>&1 | \
                         grep -v "ITC Big Data Lab" || true
 
                     echo "Cleaning HDFS directory..."
@@ -116,77 +120,61 @@ pipeline {
             }
         }
 
-        stage('Sqoop Import - Dimensions') {
+        stage('Export from PostgreSQL - Dimensions') {
             when {
                 expression { params.ETL_MODE == 'full' || params.ETL_MODE == 'sqoop_only' }
             }
             steps {
                 echo '========================================='
-                echo 'Stage 4: Sqoop Import - Dimension Tables'
+                echo 'Stage 4: Export Dimension Tables from PostgreSQL'
                 echo '========================================='
                 script {
                     def dimTables = ['dim_networks', 'dim_lines', 'dim_date', 'dim_stations']
 
                     dimTables.each { table ->
-                        echo "Importing ${table}..."
+                        echo "Exporting ${table}..."
                         sh """
                             sshpass -p "${CLOUDERA_PASSWORD}" ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
-                                ${CLOUDERA_USER}@${CLOUDERA_HOST} \
-                                "export HADOOP_CLIENT_OPTS='${HADOOP_CLIENT_OPTS}' && \
-                                 sqoop import \
-                                   --connect 'jdbc:postgresql://${PG_HOST}:${PG_PORT}/${PG_DB}' \
-                                   --username ${PG_USER} \
-                                   --password ${PG_PASSWORD} \
-                                   --table ${table} \
-                                   --target-dir ${HDFS_BASE}/${table} \
-                                   --m 1 \
-                                   ${SQOOP_OPTS} \
-                                   --delete-target-dir \
-                                   --fields-terminated-by ',' \
-                                   --null-string '\\\\N' \
-                                   --null-non-string '\\\\N'" 2>&1 | \
-                                grep -v "ITC Big Data Lab" | grep -E "INFO|retrieved|rows" | tail -20
+                                ${CLOUDERA_USER}@${CLOUDERA_HOST} bash << 'REMOTE_SCRIPT'
+mkdir -p /tmp/uttam/pg_export
+PGPASSWORD=${PG_PASSWORD} psql -h ${PG_HOST} -U ${PG_USER} -d ${PG_DB} -c "\\\\COPY ${table} TO '/tmp/uttam/pg_export/${table}.csv' WITH CSV HEADER"
+hdfs dfs -rm -r -f ${HDFS_BASE}/${table}
+hdfs dfs -mkdir -p ${HDFS_BASE}/${table}
+hdfs dfs -put /tmp/uttam/pg_export/${table}.csv ${HDFS_BASE}/${table}/
+rm -f /tmp/uttam/pg_export/${table}.csv
+echo "✓ ${table} exported"
+REMOTE_SCRIPT
                         """
-                        echo "✓ ${table} imported"
-                        sleep(10) // Prevent memory exhaustion
                     }
                 }
             }
         }
 
-        stage('Sqoop Import - Fact Tables') {
+        stage('Export from PostgreSQL - Fact Tables') {
             when {
                 expression { params.ETL_MODE == 'full' || params.ETL_MODE == 'sqoop_only' }
             }
             steps {
                 echo '========================================='
-                echo 'Stage 5: Sqoop Import - Fact Tables'
+                echo 'Stage 5: Export Fact Tables from PostgreSQL'
                 echo '========================================='
                 script {
                     def factTables = ['fact_station_lines', 'fact_passenger_entry_exit']
 
                     factTables.each { table ->
-                        echo "Importing ${table}..."
+                        echo "Exporting ${table}..."
                         sh """
                             sshpass -p "${CLOUDERA_PASSWORD}" ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
-                                ${CLOUDERA_USER}@${CLOUDERA_HOST} \
-                                "export HADOOP_CLIENT_OPTS='${HADOOP_CLIENT_OPTS}' && \
-                                 sqoop import \
-                                   --connect 'jdbc:postgresql://${PG_HOST}:${PG_PORT}/${PG_DB}' \
-                                   --username ${PG_USER} \
-                                   --password ${PG_PASSWORD} \
-                                   --table ${table} \
-                                   --target-dir ${HDFS_BASE}/${table} \
-                                   --m 1 \
-                                   ${SQOOP_OPTS} \
-                                   --delete-target-dir \
-                                   --fields-terminated-by ',' \
-                                   --null-string '\\\\N' \
-                                   --null-non-string '\\\\N'" 2>&1 | \
-                                grep -v "ITC Big Data Lab" | grep -E "INFO|retrieved|rows" | tail -20
+                                ${CLOUDERA_USER}@${CLOUDERA_HOST} bash << 'REMOTE_SCRIPT'
+mkdir -p /tmp/uttam/pg_export
+PGPASSWORD=${PG_PASSWORD} psql -h ${PG_HOST} -U ${PG_USER} -d ${PG_DB} -c "\\\\COPY ${table} TO '/tmp/uttam/pg_export/${table}.csv' WITH CSV HEADER"
+hdfs dfs -rm -r -f ${HDFS_BASE}/${table}
+hdfs dfs -mkdir -p ${HDFS_BASE}/${table}
+hdfs dfs -put /tmp/uttam/pg_export/${table}.csv ${HDFS_BASE}/${table}/
+rm -f /tmp/uttam/pg_export/${table}.csv
+echo "✓ ${table} exported"
+REMOTE_SCRIPT
                         """
-                        echo "✓ ${table} imported"
-                        sleep(10)
                     }
                 }
             }
@@ -230,7 +218,7 @@ pipeline {
                     # Create Hive database
                     sshpass -p "${CLOUDERA_PASSWORD}" ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
                         ${CLOUDERA_USER}@${CLOUDERA_HOST} \
-                        "hive -e 'CREATE DATABASE IF NOT EXISTS ${HIVE_DB};'" 2>&1 | \
+                        "beeline -u 'jdbc:hive2://${HIVESERVER2_HOST}:${HIVESERVER2_PORT}/default' -e 'CREATE DATABASE IF NOT EXISTS ${HIVE_DB};'" 2>&1 | \
                         grep -v "ITC Big Data Lab" || true
 
                     echo "✓ Hive database created: ${HIVE_DB}"
@@ -249,7 +237,7 @@ pipeline {
                 sh '''
                     # Create Hive script
                     cat > /tmp/create_hive_dims.hql << 'HIVE_EOF'
-USE tfl_warehouse;
+USE uttam_tfl;
 
 -- dim_networks
 DROP TABLE IF EXISTS dim_networks;
@@ -260,7 +248,7 @@ CREATE EXTERNAL TABLE dim_networks (
 ROW FORMAT DELIMITED
 FIELDS TERMINATED BY ','
 STORED AS TEXTFILE
-LOCATION '/user/consultant/tfl/dim_networks'
+LOCATION '/tmp/uttam/tfl_data/dim_networks'
 TBLPROPERTIES ("skip.header.line.count"="1");
 
 -- dim_lines
@@ -274,7 +262,7 @@ CREATE EXTERNAL TABLE dim_lines (
 ROW FORMAT DELIMITED
 FIELDS TERMINATED BY ','
 STORED AS TEXTFILE
-LOCATION '/user/consultant/tfl/dim_lines'
+LOCATION '/tmp/uttam/tfl_data/dim_lines'
 TBLPROPERTIES ("skip.header.line.count"="1");
 
 -- dim_date
@@ -289,7 +277,7 @@ CREATE EXTERNAL TABLE dim_date (
 ROW FORMAT DELIMITED
 FIELDS TERMINATED BY ','
 STORED AS TEXTFILE
-LOCATION '/user/consultant/tfl/dim_date'
+LOCATION '/tmp/uttam/tfl_data/dim_date'
 TBLPROPERTIES ("skip.header.line.count"="1");
 
 -- dim_stations
@@ -304,7 +292,7 @@ CREATE EXTERNAL TABLE dim_stations (
 ROW FORMAT DELIMITED
 FIELDS TERMINATED BY ','
 STORED AS TEXTFILE
-LOCATION '/user/consultant/tfl/dim_stations'
+LOCATION '/tmp/uttam/tfl_data/dim_stations'
 TBLPROPERTIES ("skip.header.line.count"="1");
 HIVE_EOF
 
@@ -314,7 +302,7 @@ HIVE_EOF
 
                     sshpass -p "${CLOUDERA_PASSWORD}" ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
                         ${CLOUDERA_USER}@${CLOUDERA_HOST} \
-                        "hive -f /tmp/create_hive_dims.hql" 2>&1 | grep -v "ITC Big Data Lab" || true
+                        "beeline -u 'jdbc:hive2://${HIVESERVER2_HOST}:${HIVESERVER2_PORT}/default' -f /tmp/create_hive_dims.hql" 2>&1 | grep -v "ITC Big Data Lab" || true
 
                     echo "✓ Dimension tables created"
                 '''
@@ -332,7 +320,7 @@ HIVE_EOF
                 sh '''
                     # Create Hive script
                     cat > /tmp/create_hive_facts.hql << 'HIVE_EOF'
-USE tfl_warehouse;
+USE uttam_tfl;
 
 -- fact_station_lines
 DROP TABLE IF EXISTS fact_station_lines;
@@ -347,7 +335,7 @@ CREATE EXTERNAL TABLE fact_station_lines (
 ROW FORMAT DELIMITED
 FIELDS TERMINATED BY ','
 STORED AS TEXTFILE
-LOCATION '/user/consultant/tfl/fact_station_lines'
+LOCATION '/tmp/uttam/tfl_data/fact_station_lines'
 TBLPROPERTIES ("skip.header.line.count"="1");
 
 -- fact_passenger_entry_exit
@@ -361,7 +349,7 @@ CREATE EXTERNAL TABLE fact_passenger_entry_exit (
 ROW FORMAT DELIMITED
 FIELDS TERMINATED BY ','
 STORED AS TEXTFILE
-LOCATION '/user/consultant/tfl/fact_passenger_entry_exit'
+LOCATION '/tmp/uttam/tfl_data/fact_passenger_entry_exit'
 TBLPROPERTIES ("skip.header.line.count"="1");
 HIVE_EOF
 
@@ -371,7 +359,7 @@ HIVE_EOF
 
                     sshpass -p "${CLOUDERA_PASSWORD}" ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
                         ${CLOUDERA_USER}@${CLOUDERA_HOST} \
-                        "hive -f /tmp/create_hive_facts.hql" 2>&1 | grep -v "ITC Big Data Lab" || true
+                        "beeline -u 'jdbc:hive2://${HIVESERVER2_HOST}:${HIVESERVER2_PORT}/default' -f /tmp/create_hive_facts.hql" 2>&1 | grep -v "ITC Big Data Lab" || true
 
                     echo "✓ Fact tables created"
                 '''
@@ -390,14 +378,14 @@ HIVE_EOF
                     echo "Hive tables in ${HIVE_DB}:"
                     sshpass -p "${CLOUDERA_PASSWORD}" ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
                         ${CLOUDERA_USER}@${CLOUDERA_HOST} \
-                        "hive -e 'USE ${HIVE_DB}; SHOW TABLES;'" 2>&1 | grep -v "ITC Big Data Lab" || true
+                        "beeline -u 'jdbc:hive2://${HIVESERVER2_HOST}:${HIVESERVER2_PORT}/default' -e 'USE ${HIVE_DB}; SHOW TABLES;'" 2>&1 | grep -v "ITC Big Data Lab" || true
 
                     echo ""
                     echo "Row counts per Hive table:"
                     for TABLE in dim_networks dim_lines dim_date dim_stations fact_station_lines fact_passenger_entry_exit; do
                         COUNT=$(sshpass -p "${CLOUDERA_PASSWORD}" ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
                             ${CLOUDERA_USER}@${CLOUDERA_HOST} \
-                            "hive -e 'USE ${HIVE_DB}; SELECT COUNT(*) FROM $TABLE;' 2>&1" | \
+                            "beeline -u 'jdbc:hive2://${HIVESERVER2_HOST}:${HIVESERVER2_PORT}/default' -e 'USE ${HIVE_DB}; SELECT COUNT(*) FROM $TABLE;' 2>&1" | \
                             grep -v "ITC Big Data Lab" | tail -1)
                         echo "  $TABLE: $COUNT rows"
                     done
@@ -417,7 +405,7 @@ HIVE_EOF
                     echo "Sample Query 1: Top 10 busiest stations (2019)"
                     sshpass -p "${CLOUDERA_PASSWORD}" ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
                         ${CLOUDERA_USER}@${CLOUDERA_HOST} \
-                        "hive -e 'USE ${HIVE_DB};
+                        "beeline -u 'jdbc:hive2://${HIVESERVER2_HOST}:${HIVESERVER2_PORT}/default' -e 'USE ${HIVE_DB};
                         SELECT s.station_name, SUM(f.total_entry_exit) as total_passengers
                         FROM fact_passenger_entry_exit f
                         JOIN dim_stations s ON f.station_id = s.station_id
@@ -431,7 +419,7 @@ HIVE_EOF
                     echo "Sample Query 2: Lines with most stations"
                     sshpass -p "${CLOUDERA_PASSWORD}" ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
                         ${CLOUDERA_USER}@${CLOUDERA_HOST} \
-                        "hive -e 'USE ${HIVE_DB};
+                        "beeline -u 'jdbc:hive2://${HIVESERVER2_HOST}:${HIVESERVER2_PORT}/default' -e 'USE ${HIVE_DB};
                         SELECT l.line_name, COUNT(DISTINCT sl.station_id) as num_stations
                         FROM fact_station_lines sl
                         JOIN dim_lines l ON sl.line_id = l.line_id
@@ -462,7 +450,7 @@ HIVE_EOF
             echo "Query your data:"
             echo "  ssh consultant@13.41.167.97"
             echo "  hive"
-            echo "  USE tfl_warehouse;"
+            echo "  USE uttam_tfl;"
             echo "  SELECT * FROM dim_stations LIMIT 10;"
             echo '========================================='
         }
