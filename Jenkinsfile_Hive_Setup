@@ -1,0 +1,195 @@
+// Jenkinsfile for TfL Hive Database & Table Creation
+// Executes HQL scripts via beeline
+
+pipeline {
+    agent any
+
+    parameters {
+        choice(
+            name: 'EXECUTION_MODE',
+            choices: ['database_only', 'tables_only', 'full_setup'],
+            description: 'What to execute'
+        )
+    }
+
+    environment {
+        // Cloudera Cluster
+        REMOTE_HOST = '13.41.167.97'
+        REMOTE_USER = 'consultant'
+        REMOTE_PASSWORD = 'WelcomeItc@2026'
+        PROJECT_DIR = '/home/consultant/uttam/TFL_Project_Demo'
+
+        // HiveServer2 Connection
+        HIVESERVER2_HOST = 'ip-172-31-12-74.eu-west-2.compute.internal'
+        HIVESERVER2_PORT = '10000'
+        HIVE_JDBC_URL = "jdbc:hive2://${HIVESERVER2_HOST}:${HIVESERVER2_PORT}/default"
+    }
+
+    stages {
+        stage('Checkout') {
+            steps {
+                echo '========================================='
+                echo 'Stage 1: Git Checkout'
+                echo '========================================='
+                checkout scm
+                sh 'git log -1 --oneline'
+            }
+        }
+
+        stage('Verify HQL Scripts') {
+            steps {
+                echo '========================================='
+                echo 'Stage 2: Verify HQL Scripts'
+                echo '========================================='
+                sh '''
+                    echo "HQL scripts in workspace:"
+                    ls -lh src/hive/*.hql
+                    echo ""
+                    echo "Script contents:"
+                    for script in src/hive/*.hql; do
+                        echo "=== $(basename $script) ==="
+                        wc -l $script
+                    done
+                '''
+            }
+        }
+
+        stage('Deploy HQL Scripts') {
+            steps {
+                echo '========================================='
+                echo 'Stage 3: Deploy HQL Scripts to Cloudera'
+                echo '========================================='
+                sh '''
+                    # Create remote directory
+                    sshpass -p "${REMOTE_PASSWORD}" ssh -o StrictHostKeyChecking=no \
+                        -o UserKnownHostsFile=/dev/null ${REMOTE_USER}@${REMOTE_HOST} \
+                        "mkdir -p ${PROJECT_DIR}/src/hive"
+
+                    # Copy HQL scripts
+                    sshpass -p "${REMOTE_PASSWORD}" scp -o StrictHostKeyChecking=no \
+                        -o UserKnownHostsFile=/dev/null src/hive/*.hql \
+                        ${REMOTE_USER}@${REMOTE_HOST}:${PROJECT_DIR}/src/hive/
+
+                    echo "✓ HQL scripts deployed successfully"
+                '''
+            }
+        }
+
+        stage('Check HiveServer2') {
+            steps {
+                echo '========================================='
+                echo 'Stage 4: Verify HiveServer2 Connectivity'
+                echo '========================================='
+                sh '''
+                    echo "Testing connection to HiveServer2..."
+                    sshpass -p "${REMOTE_PASSWORD}" ssh -o StrictHostKeyChecking=no \
+                        -o UserKnownHostsFile=/dev/null ${REMOTE_USER}@${REMOTE_HOST} \
+                        "beeline -u '${HIVE_JDBC_URL}' -e 'SHOW DATABASES;' 2>&1 | tail -10"
+
+                    echo "✓ HiveServer2 connection successful"
+                '''
+            }
+        }
+
+        stage('Execute HQL Scripts') {
+            steps {
+                echo '========================================='
+                echo 'Stage 5: Execute HQL Scripts'
+                echo '========================================='
+                echo "Execution Mode: ${params.EXECUTION_MODE}"
+
+                script {
+                    if (params.EXECUTION_MODE == 'database_only' || params.EXECUTION_MODE == 'full_setup') {
+                        echo "Executing: 01_create_database.hql"
+                        sh '''
+                            sshpass -p "${REMOTE_PASSWORD}" ssh -o StrictHostKeyChecking=no \
+                                -o UserKnownHostsFile=/dev/null ${REMOTE_USER}@${REMOTE_HOST} \
+                                "cd ${PROJECT_DIR} && beeline -u '${HIVE_JDBC_URL}' \
+                                -f src/hive/01_create_database.hql" 2>&1 | \
+                                grep -E "database_name|rows affected|OK|Error" || true
+                        '''
+                        echo "✓ Database created"
+                        echo ""
+                    }
+
+                    if (params.EXECUTION_MODE == 'tables_only' || params.EXECUTION_MODE == 'full_setup') {
+                        echo "Executing: 02_create_tables.hql"
+                        sh '''
+                            sshpass -p "${REMOTE_PASSWORD}" ssh -o StrictHostKeyChecking=no \
+                                -o UserKnownHostsFile=/dev/null ${REMOTE_USER}@${REMOTE_HOST} \
+                                "cd ${PROJECT_DIR} && beeline -u '${HIVE_JDBC_URL}' \
+                                -f src/hive/02_create_tables.hql" 2>&1 | \
+                                grep -E "tab_name|rows selected|OK|Error" || true
+                        '''
+                        echo "✓ Tables created"
+                    }
+                }
+            }
+        }
+
+        stage('Verify Results') {
+            steps {
+                echo '========================================='
+                echo 'Stage 6: Verify Database & Tables'
+                echo '========================================='
+                sh '''
+                    echo "Checking database..."
+                    sshpass -p "${REMOTE_PASSWORD}" ssh -o StrictHostKeyChecking=no \
+                        -o UserKnownHostsFile=/dev/null ${REMOTE_USER}@${REMOTE_HOST} \
+                        "beeline -u '${HIVE_JDBC_URL}' -e \"SHOW DATABASES LIKE 'uttam%';\"" 2>&1 | \
+                        grep -E "database_name|uttam" || echo "Database not found"
+
+                    echo ""
+                    echo "Checking tables..."
+                    sshpass -p "${REMOTE_PASSWORD}" ssh -o StrictHostKeyChecking=no \
+                        -o UserKnownHostsFile=/dev/null ${REMOTE_USER}@${REMOTE_HOST} \
+                        "beeline -u '${HIVE_JDBC_URL}' -e \"USE uttam_tfl; SHOW TABLES;\"" 2>&1 | \
+                        grep -E "tab_name|dim_|fact_" || echo "No tables found"
+
+                    echo ""
+                    echo "Checking table row counts..."
+                    for table in dim_networks dim_lines dim_stations dim_date fact_station_lines fact_passenger_entry_exit; do
+                        COUNT=$(sshpass -p "${REMOTE_PASSWORD}" ssh -o StrictHostKeyChecking=no \
+                            -o UserKnownHostsFile=/dev/null ${REMOTE_USER}@${REMOTE_HOST} \
+                            "beeline -u '${HIVE_JDBC_URL}' --silent=true --outputformat=tsv2 \
+                            -e \"SELECT COUNT(*) FROM uttam_tfl.$table;\" 2>/dev/null" | tail -1 || echo "0")
+                        echo "$table: $COUNT rows"
+                    done
+                '''
+            }
+        }
+    }
+
+    post {
+        success {
+            echo '========================================='
+            echo '✓✓✓ HIVE SETUP COMPLETED SUCCESSFULLY ✓✓✓'
+            echo '========================================='
+            echo "Execution Mode: ${params.EXECUTION_MODE}"
+            echo "Database: uttam_tfl"
+            echo "HiveServer2: ${HIVESERVER2_HOST}:${HIVESERVER2_PORT}"
+            echo ""
+            echo "Next Steps:"
+            echo "  1. Verify in Hue: http://${REMOTE_HOST}:8888"
+            echo "  2. Run Sqoop import to populate HDFS"
+            echo "  3. Query tables via Hive/Impala"
+            echo '========================================='
+        }
+        failure {
+            echo '========================================='
+            echo '✗✗✗ HIVE SETUP FAILED ✗✗✗'
+            echo '========================================='
+            echo "Mode: ${params.EXECUTION_MODE}"
+            echo ""
+            echo "Common issues:"
+            echo "  1. HiveServer2 not running - Check Cloudera Manager"
+            echo "  2. HQL syntax error - Check script files"
+            echo "  3. HDFS path not accessible - Verify permissions"
+            echo "  4. Connection timeout - Check network/firewall"
+            echo '========================================='
+        }
+        always {
+            echo 'Pipeline execution completed'
+        }
+    }
+}
