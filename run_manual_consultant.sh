@@ -5,7 +5,7 @@ set -e
 
 REMOTE_HOST="13.41.167.97"
 REMOTE_USER="consultant"
-REMOTE_PASSWORD="WelcomeItc@2026"
+REMOTE_PASSWORD="Cl0ud3ra@2026#Secur3!"
 PROJECT_DIR="/home/consultant/uttam/TFL_Project_Demo"
 
 echo "========================================="

@@ -3,7 +3,7 @@
 
 REMOTE_HOST="13.41.167.97"
 REMOTE_USER="consultant"
-REMOTE_PASSWORD="WelcomeItc@2026"
+REMOTE_PASSWORD="Cl0ud3ra@2026#Secur3!"
 
 echo "========================================="
 echo "Running Pipeline & Showing Results"

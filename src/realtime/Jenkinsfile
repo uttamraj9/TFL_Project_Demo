@@ -67,7 +67,7 @@ pipeline {
                 echo ''
                 echo '1. SSH to server:'
                 echo "   ssh ${REMOTE_USER}@${REMOTE_HOST}"
-                echo '   Password: WelcomeItc@2026'
+                echo '   Password: Cl0ud3ra@2026#Secur3!'
                 echo ''
                 echo '2. Run the test script:'
                 echo '   cd /home/consultant/uttam/TFL_Project_Demo'
