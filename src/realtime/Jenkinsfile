@@ -185,15 +185,15 @@ CONSUMER_CMD
                 sh '''
                     ssh -i ${SSH_KEY} -o StrictHostKeyChecking=no \
                         ec2-user@${CLOUDERA_HOST} bash << 'VERIFY_CMD'
-                        sudo -u consultant bash << "INNER_CMD"
+                        sudo -u consultant bash << 'INNER_CMD'
                         echo "HBase Table Status:"
-                        echo "list 'tfl_arrivals'" | hbase shell 2>/dev/null | grep -E "tfl_arrivals|TABLE|ERROR" || echo "Checking table..."
+                        echo "list" | hbase shell 2>/dev/null | grep tfl_arrivals || echo "Table not found"
                         echo ""
                         echo "Row Count:"
-                        echo "count 'tfl_arrivals', LIMIT => 100" | hbase shell 2>/dev/null | tail -5
+                        echo "count 'tfl_arrivals', LIMIT => 100" | hbase shell 2>/dev/null | tail -5 || echo "Cannot count"
                         echo ""
-                        echo "Sample Records (first 3):"
-                        echo "scan 'tfl_arrivals', {LIMIT => 3}" | hbase shell 2>/dev/null | grep -A2 "ROW\|column\|value" | head -20
+                        echo "Sample Records:"
+                        echo "scan 'tfl_arrivals', {LIMIT => 3}" | hbase shell 2>/dev/null | head -30 || echo "Cannot scan"
 INNER_CMD
 VERIFY_CMD
                 '''
