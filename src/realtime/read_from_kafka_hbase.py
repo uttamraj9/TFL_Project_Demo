@@ -53,7 +53,7 @@ def main():
     hbase_table = "tfl_arrivals"
     checkpoint_location = "/tmp/uttam/kafka/tfl_hbase/checkpoint"
 
-    print(f"Starting TfL Kafka → HBase Consumer...")
+    print(f"Starting TfL Kafka -> HBase Consumer...")
     print(f"Kafka Topic: {kafka_topic}")
     print(f"HBase Table: {hbase_table}")
     print(f"Checkpoint: {checkpoint_location}")
@@ -95,7 +95,7 @@ def main():
         .outputMode("append") \
         .start()
 
-    print("✓ Streaming started - writing to HBase")
+    print("OK Streaming started - writing to HBase")
     print("Press Ctrl+C to stop...")
 
     # Wait for termination
