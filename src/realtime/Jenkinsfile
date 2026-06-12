@@ -1,5 +1,5 @@
 // Jenkinsfile for TfL Real-time Pipeline (Kafka + Spark Streaming)
-// Uses SSH key to ec2-user, then sudo to consultant
+// Jenkins runs ON the Cloudera server, uses sudo to consultant user
 
 pipeline {
     agent any
@@ -18,11 +18,9 @@ pipeline {
     }
 
     environment {
-        REMOTE_HOST = '13.41.167.97'
         PROJECT_DIR = '/home/consultant/uttam/TFL_Project_Demo'
         KAFKA_BROKERS = 'ip-172-31-8-235.eu-west-2.compute.internal:9092,ip-172-31-14-3.eu-west-2.compute.internal:9092'
         KAFKA_TOPIC = 'tfl_arrivals'
-        SSH_KEY_PATH = '/var/lib/jenkins/Desktop/Training/test_key.pem'
     }
 
     stages {
@@ -44,30 +42,14 @@ pipeline {
                 echo 'Deploy PySpark Scripts to Cloudera'
                 echo '========================================='
                 sh '''
-                    # Deploy via ec2-user then sudo to consultant
-                    ssh -i ${SSH_KEY_PATH} -o StrictHostKeyChecking=no \
-                        ec2-user@${REMOTE_HOST} << 'DEPLOY_EOF'
-
-                    # Create temp directory
-                    mkdir -p /tmp/tfl_realtime_deploy
-DEPLOY_EOF
-
-                    # Copy Python scripts
-                    scp -i ${SSH_KEY_PATH} -o StrictHostKeyChecking=no \
-                        src/realtime/*.py ec2-user@${REMOTE_HOST}:/tmp/tfl_realtime_deploy/
-
-                    # Move to consultant directory and set permissions
-                    ssh -i ${SSH_KEY_PATH} -o StrictHostKeyChecking=no \
-                        ec2-user@${REMOTE_HOST} << 'MOVE_EOF'
-
+                    # Copy scripts to consultant directory
                     sudo mkdir -p ${PROJECT_DIR}/src/realtime
-                    sudo cp /tmp/tfl_realtime_deploy/*.py ${PROJECT_DIR}/src/realtime/
+                    sudo cp src/realtime/*.py ${PROJECT_DIR}/src/realtime/
                     sudo chown -R consultant:consultant ${PROJECT_DIR}/src/realtime
                     sudo chmod +x ${PROJECT_DIR}/src/realtime/*.py
-                    rm -rf /tmp/tfl_realtime_deploy
 
                     echo "✓ Scripts deployed to ${PROJECT_DIR}/src/realtime/"
-MOVE_EOF
+                    sudo ls -la ${PROJECT_DIR}/src/realtime/
                 '''
             }
         }
@@ -78,10 +60,7 @@ MOVE_EOF
                 echo 'Create Kafka Topic'
                 echo '========================================='
                 sh '''
-                    ssh -i ${SSH_KEY_PATH} -o StrictHostKeyChecking=no \
-                        ec2-user@${REMOTE_HOST} << 'KAFKA_EOF'
-
-                    sudo -u consultant bash << 'SUDO_EOF'
+                    sudo -u consultant bash << 'KAFKA_SETUP'
                     kafka-topics --create --if-not-exists \
                         --bootstrap-server ${KAFKA_BROKERS} \
                         --topic ${KAFKA_TOPIC} \
@@ -89,8 +68,7 @@ MOVE_EOF
                         --replication-factor 2 2>&1 || echo "Topic may already exist"
 
                     echo "✓ Kafka topic ready: ${KAFKA_TOPIC}"
-SUDO_EOF
-KAFKA_EOF
+KAFKA_SETUP
                 '''
             }
         }
@@ -104,10 +82,7 @@ KAFKA_EOF
                 echo 'Start Kafka Producer (TfL API → Kafka)'
                 echo '========================================='
                 sh '''
-                    ssh -i ${SSH_KEY_PATH} -o StrictHostKeyChecking=no \
-                        ec2-user@${REMOTE_HOST} << 'PRODUCER_EOF'
-
-                    sudo -u consultant bash << 'SUDO_EOF'
+                    sudo -u consultant bash << 'PRODUCER_SCRIPT'
                     cd ${PROJECT_DIR}/src/realtime
 
                     # Kill existing producer
@@ -123,9 +98,9 @@ KAFKA_EOF
                       --packages org.apache.spark:spark-sql-kafka-0-10_2.12:3.1.1 \
                       send_data_to_kafka.py > /tmp/producer_${BUILD_NUMBER}.log 2>&1 &
 
-                    echo "✓ Producer started (PID: $!)"
-SUDO_EOF
-PRODUCER_EOF
+                    PRODUCER_PID=$!
+                    echo "✓ Producer started (PID: $PRODUCER_PID)"
+PRODUCER_SCRIPT
                 '''
             }
         }
@@ -139,10 +114,7 @@ PRODUCER_EOF
                 echo 'Start Kafka Consumer (Kafka → HDFS)'
                 echo '========================================='
                 sh '''
-                    ssh -i ${SSH_KEY_PATH} -o StrictHostKeyChecking=no \
-                        ec2-user@${REMOTE_HOST} << 'CONSUMER_EOF'
-
-                    sudo -u consultant bash << 'SUDO_EOF'
+                    sudo -u consultant bash << 'CONSUMER_SCRIPT'
                     cd ${PROJECT_DIR}/src/realtime
 
                     # Kill existing consumer
@@ -161,9 +133,9 @@ PRODUCER_EOF
                       --packages org.apache.spark:spark-sql-kafka-0-10_2.12:3.1.1 \
                       read_from_kafka.py > /tmp/consumer_${BUILD_NUMBER}.log 2>&1 &
 
-                    echo "✓ Consumer started (PID: $!)"
-SUDO_EOF
-CONSUMER_EOF
+                    CONSUMER_PID=$!
+                    echo "✓ Consumer started (PID: $CONSUMER_PID)"
+CONSUMER_SCRIPT
                 '''
             }
         }
@@ -182,13 +154,12 @@ CONSUMER_EOF
 
                     echo ""
                     echo "Status check:"
-                    ssh -i ${SSH_KEY_PATH} -o StrictHostKeyChecking=no \
-                        ec2-user@${REMOTE_HOST} \
-                        "sudo -u consultant hdfs dfs -ls /tmp/uttam/kafka/tfl_arrivals/data/ 2>&1 | tail -5 || echo 'No data yet'"
+                    sudo -u consultant hdfs dfs -ls /tmp/uttam/kafka/tfl_arrivals/data/ 2>&1 | tail -5 || echo "No data yet"
 
                     # Wait for remaining duration
                     REMAINING=$((DURATION_SECONDS - 30))
                     if [ $REMAINING -gt 0 ]; then
+                        echo "Waiting ${REMAINING} more seconds..."
                         sleep $REMAINING
                     fi
 
@@ -203,10 +174,7 @@ CONSUMER_EOF
                 echo 'Verify HDFS Output'
                 echo '========================================='
                 sh '''
-                    ssh -i ${SSH_KEY_PATH} -o StrictHostKeyChecking=no \
-                        ec2-user@${REMOTE_HOST} << 'VERIFY_EOF'
-
-                    sudo -u consultant bash << 'SUDO_EOF'
+                    sudo -u consultant bash << 'VERIFY_SCRIPT'
                     echo "HDFS Output Directory:"
                     hdfs dfs -ls /tmp/uttam/kafka/tfl_arrivals/data/ 2>&1 | tail -10 || echo "No data directory"
 
@@ -216,9 +184,9 @@ CONSUMER_EOF
 
                     echo ""
                     echo "Record Count:"
-                    hdfs dfs -cat /tmp/uttam/kafka/tfl_arrivals/data/*.csv 2>/dev/null | wc -l || echo "0"
-SUDO_EOF
-VERIFY_EOF
+                    RECORD_COUNT=$(hdfs dfs -cat /tmp/uttam/kafka/tfl_arrivals/data/*.csv 2>/dev/null | wc -l || echo "0")
+                    echo "Total records: $RECORD_COUNT"
+VERIFY_SCRIPT
                 '''
             }
         }
@@ -229,11 +197,8 @@ VERIFY_EOF
                 echo 'Stop Streaming Jobs'
                 echo '========================================='
                 sh '''
-                    ssh -i ${SSH_KEY_PATH} -o StrictHostKeyChecking=no \
-                        ec2-user@${REMOTE_HOST} \
-                        "sudo pkill -9 -f send_data_to_kafka.py || true; \
-                         sudo pkill -9 -f read_from_kafka.py || true"
-
+                    sudo pkill -9 -f send_data_to_kafka.py || true
+                    sudo pkill -9 -f read_from_kafka.py || true
                     echo "✓ Jobs stopped"
                 '''
             }
@@ -257,7 +222,7 @@ VERIFY_EOF
             echo '========================================='
             echo "Mode: ${params.MODE}"
             echo ""
-            echo "Check logs on ${env.REMOTE_HOST}:"
+            echo "Check logs:"
             echo "  Producer: /tmp/producer_${BUILD_NUMBER}.log"
             echo "  Consumer: /tmp/consumer_${BUILD_NUMBER}.log"
             echo '========================================='
