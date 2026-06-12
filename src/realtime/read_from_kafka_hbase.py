@@ -35,7 +35,8 @@ def foreach_batch_function(df, epoch_id):
         .mode("append") \
         .save()
 
-    print(f"Batch {epoch_id}: Written {df.count()} records to HBase")
+    count = df.count()
+    print("Batch " + str(epoch_id) + ": Written " + str(count) + " records to HBase")
 
 def main():
     # Create Spark Session with HBase support
