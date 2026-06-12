@@ -22,7 +22,7 @@ pipeline {
         PROJECT_DIR = '/home/consultant/uttam/TFL_Project_Demo'
         KAFKA_BROKERS = 'ip-172-31-8-235.eu-west-2.compute.internal:9092,ip-172-31-14-3.eu-west-2.compute.internal:9092'
         KAFKA_TOPIC = 'tfl_arrivals'
-        SSH_KEY_PATH = '/home/ec2-user/Desktop/Training/test_key.pem'
+        SSH_KEY_PATH = '/var/lib/jenkins/Desktop/Training/test_key.pem'
     }
 
     stages {
