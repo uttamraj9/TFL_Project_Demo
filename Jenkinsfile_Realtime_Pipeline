@@ -24,6 +24,7 @@ pipeline {
         REMOTE_USER = 'consultant'
         REMOTE_PASSWORD = 'WelcomeItc@2026'
         PROJECT_DIR = '/home/consultant/uttam/TFL_Project_Demo'
+        REALTIME_DIR = '${PROJECT_DIR}/src/realtime'
 
         // Kafka Brokers (from your cluster)
         KAFKA_BROKERS = 'ip-172-31-8-235.eu-west-2.compute.internal:9092,ip-172-31-14-3.eu-west-2.compute.internal:9092'
@@ -55,17 +56,17 @@ pipeline {
                     # Create directory
                     sshpass -p "${REMOTE_PASSWORD}" ssh -o StrictHostKeyChecking=no \
                         -o UserKnownHostsFile=/dev/null ${REMOTE_USER}@${REMOTE_HOST} \
-                        "mkdir -p ${PROJECT_DIR}/realtime_pipeline/src"
+                        "mkdir -p ${REALTIME_DIR}"
 
                     # Copy scripts
                     sshpass -p "${REMOTE_PASSWORD}" scp -o StrictHostKeyChecking=no \
-                        -o UserKnownHostsFile=/dev/null realtime_pipeline/src/*.py \
-                        ${REMOTE_USER}@${REMOTE_HOST}:${PROJECT_DIR}/realtime_pipeline/src/
+                        -o UserKnownHostsFile=/dev/null src/realtime/*.py \
+                        ${REMOTE_USER}@${REMOTE_HOST}:${REALTIME_DIR}/
 
                     # Set permissions
                     sshpass -p "${REMOTE_PASSWORD}" ssh -o StrictHostKeyChecking=no \
                         -o UserKnownHostsFile=/dev/null ${REMOTE_USER}@${REMOTE_HOST} \
-                        "chmod +x ${PROJECT_DIR}/realtime_pipeline/src/*.py"
+                        "chmod +x ${REALTIME_DIR}/*.py"
 
                     echo "✓ Scripts deployed"
                 '''
@@ -118,7 +119,7 @@ pipeline {
                     sshpass -p "${REMOTE_PASSWORD}" ssh -o StrictHostKeyChecking=no \
                         -o UserKnownHostsFile=/dev/null ${REMOTE_USER}@${REMOTE_HOST} bash << 'PRODUCER_SCRIPT'
 
-cd ${PROJECT_DIR}/realtime_pipeline/src
+cd ${REALTIME_DIR}
 
 # Kill any existing producer
 pkill -9 -f send_data_to_kafka || true
@@ -158,7 +159,7 @@ PRODUCER_SCRIPT
                     sshpass -p "${REMOTE_PASSWORD}" ssh -o StrictHostKeyChecking=no \
                         -o UserKnownHostsFile=/dev/null ${REMOTE_USER}@${REMOTE_HOST} bash << 'CONSUMER_SCRIPT'
 
-cd ${PROJECT_DIR}/realtime_pipeline/src
+cd ${REALTIME_DIR}
 
 # Kill any existing consumer
 pkill -9 -f read_from_kafka || true
