@@ -1,5 +1,5 @@
 // Jenkinsfile for TfL Real-time Pipeline (Kafka + Spark Streaming)
-// Using SSH key authentication (no sshpass required)
+// Uses SSH key to ec2-user, then sudo to consultant
 
 pipeline {
     agent any
@@ -12,17 +12,17 @@ pipeline {
         )
         string(
             name: 'DURATION_MINUTES',
-            defaultValue: '3',
+            defaultValue: '2',
             description: 'How long to run (minutes)'
         )
     }
 
     environment {
         REMOTE_HOST = '13.41.167.97'
-        SSH_KEY = credentials('test_key')  // Jenkins credential ID for SSH key
         PROJECT_DIR = '/home/consultant/uttam/TFL_Project_Demo'
         KAFKA_BROKERS = 'ip-172-31-8-235.eu-west-2.compute.internal:9092,ip-172-31-14-3.eu-west-2.compute.internal:9092'
         KAFKA_TOPIC = 'tfl_arrivals'
+        SSH_KEY_PATH = '/home/ec2-user/Desktop/Training/test_key.pem'
     }
 
     stages {
@@ -45,21 +45,19 @@ pipeline {
                 echo '========================================='
                 sh '''
                     # Deploy via ec2-user then sudo to consultant
-                    ssh -i ~/Desktop/Training/test_key.pem -o StrictHostKeyChecking=no \
+                    ssh -i ${SSH_KEY_PATH} -o StrictHostKeyChecking=no \
                         ec2-user@${REMOTE_HOST} << 'DEPLOY_EOF'
 
                     # Create temp directory
                     mkdir -p /tmp/tfl_realtime_deploy
-
-                    # Exit to copy files
 DEPLOY_EOF
 
                     # Copy Python scripts
-                    scp -i ~/Desktop/Training/test_key.pem -o StrictHostKeyChecking=no \
+                    scp -i ${SSH_KEY_PATH} -o StrictHostKeyChecking=no \
                         src/realtime/*.py ec2-user@${REMOTE_HOST}:/tmp/tfl_realtime_deploy/
 
                     # Move to consultant directory and set permissions
-                    ssh -i ~/Desktop/Training/test_key.pem -o StrictHostKeyChecking=no \
+                    ssh -i ${SSH_KEY_PATH} -o StrictHostKeyChecking=no \
                         ec2-user@${REMOTE_HOST} << 'MOVE_EOF'
 
                     sudo mkdir -p ${PROJECT_DIR}/src/realtime
@@ -80,7 +78,7 @@ MOVE_EOF
                 echo 'Create Kafka Topic'
                 echo '========================================='
                 sh '''
-                    ssh -i ~/Desktop/Training/test_key.pem -o StrictHostKeyChecking=no \
+                    ssh -i ${SSH_KEY_PATH} -o StrictHostKeyChecking=no \
                         ec2-user@${REMOTE_HOST} << 'KAFKA_EOF'
 
                     sudo -u consultant bash << 'SUDO_EOF'
@@ -106,7 +104,7 @@ KAFKA_EOF
                 echo 'Start Kafka Producer (TfL API → Kafka)'
                 echo '========================================='
                 sh '''
-                    ssh -i ~/Desktop/Training/test_key.pem -o StrictHostKeyChecking=no \
+                    ssh -i ${SSH_KEY_PATH} -o StrictHostKeyChecking=no \
                         ec2-user@${REMOTE_HOST} << 'PRODUCER_EOF'
 
                     sudo -u consultant bash << 'SUDO_EOF'
@@ -141,7 +139,7 @@ PRODUCER_EOF
                 echo 'Start Kafka Consumer (Kafka → HDFS)'
                 echo '========================================='
                 sh '''
-                    ssh -i ~/Desktop/Training/test_key.pem -o StrictHostKeyChecking=no \
+                    ssh -i ${SSH_KEY_PATH} -o StrictHostKeyChecking=no \
                         ec2-user@${REMOTE_HOST} << 'CONSUMER_EOF'
 
                     sudo -u consultant bash << 'SUDO_EOF'
@@ -177,19 +175,22 @@ CONSUMER_EOF
                 echo '========================================='
                 sh '''
                     DURATION_SECONDS=$((${DURATION_MINUTES} * 60))
-                    echo "Running for ${DURATION_MINUTES} minutes..."
+                    echo "Running for ${DURATION_MINUTES} minutes (${DURATION_SECONDS} seconds)..."
 
-                    # Monitor for half the duration, then check status
-                    sleep $((DURATION_SECONDS / 2))
+                    # Wait 30 seconds then check status
+                    sleep 30
 
                     echo ""
-                    echo "Mid-run status check:"
-                    ssh -i ~/Desktop/Training/test_key.pem -o StrictHostKeyChecking=no \
+                    echo "Status check:"
+                    ssh -i ${SSH_KEY_PATH} -o StrictHostKeyChecking=no \
                         ec2-user@${REMOTE_HOST} \
                         "sudo -u consultant hdfs dfs -ls /tmp/uttam/kafka/tfl_arrivals/data/ 2>&1 | tail -5 || echo 'No data yet'"
 
                     # Wait for remaining duration
-                    sleep $((DURATION_SECONDS / 2))
+                    REMAINING=$((DURATION_SECONDS - 30))
+                    if [ $REMAINING -gt 0 ]; then
+                        sleep $REMAINING
+                    fi
 
                     echo "✓ Duration complete"
                 '''
@@ -202,7 +203,7 @@ CONSUMER_EOF
                 echo 'Verify HDFS Output'
                 echo '========================================='
                 sh '''
-                    ssh -i ~/Desktop/Training/test_key.pem -o StrictHostKeyChecking=no \
+                    ssh -i ${SSH_KEY_PATH} -o StrictHostKeyChecking=no \
                         ec2-user@${REMOTE_HOST} << 'VERIFY_EOF'
 
                     sudo -u consultant bash << 'SUDO_EOF'
@@ -228,7 +229,7 @@ VERIFY_EOF
                 echo 'Stop Streaming Jobs'
                 echo '========================================='
                 sh '''
-                    ssh -i ~/Desktop/Training/test_key.pem -o StrictHostKeyChecking=no \
+                    ssh -i ${SSH_KEY_PATH} -o StrictHostKeyChecking=no \
                         ec2-user@${REMOTE_HOST} \
                         "sudo pkill -9 -f send_data_to_kafka.py || true; \
                          sudo pkill -9 -f read_from_kafka.py || true"
@@ -246,7 +247,7 @@ VERIFY_EOF
             echo '========================================='
             echo "Mode: ${params.MODE}"
             echo "Duration: ${params.DURATION_MINUTES} minutes"
-            echo "Kafka Topic: ${KAFKA_TOPIC}"
+            echo "Kafka Topic: ${env.KAFKA_TOPIC}"
             echo "HDFS Output: /tmp/uttam/kafka/tfl_arrivals/data/"
             echo '========================================='
         }
@@ -254,7 +255,9 @@ VERIFY_EOF
             echo '========================================='
             echo '✗✗✗ PIPELINE FAILED ✗✗✗'
             echo '========================================='
-            echo "Check logs on ${REMOTE_HOST}:"
+            echo "Mode: ${params.MODE}"
+            echo ""
+            echo "Check logs on ${env.REMOTE_HOST}:"
             echo "  Producer: /tmp/producer_${BUILD_NUMBER}.log"
             echo "  Consumer: /tmp/consumer_${BUILD_NUMBER}.log"
             echo '========================================='
