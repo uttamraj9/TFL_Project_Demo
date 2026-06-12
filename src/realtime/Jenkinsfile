@@ -1,10 +1,6 @@
 pipeline {
     agent any
 
-    parameters {
-        string(name: 'DURATION_MINUTES', defaultValue: '5', description: 'How long to run')
-    }
-
     stages {
         stage('Run Pipeline') {
             steps {
@@ -16,7 +12,7 @@ pipeline {
                     git clone https://github.com/uttamraj9/TFL_Project_Demo.git
                     cd TFL_Project_Demo/src/realtime
 
-                    pip3 install --user kafka-python happybase requests
+                    pip3 install --user kafka-python requests
 
                     bash test.sh
 SCRIPT
