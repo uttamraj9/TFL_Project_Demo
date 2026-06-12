@@ -102,6 +102,8 @@ KAFKA_CMD
                         sudo -u consultant bash << "INNER_CMD"
                         cd ${PROJECT_DIR}/src/realtime
                         pkill -9 -f send_data_to_kafka.py || true
+                        export PYSPARK_PYTHON=/usr/bin/python3
+                        export PYSPARK_DRIVER_PYTHON=/usr/bin/python3
                         nohup timeout ${DURATION_MINUTES}m spark-submit \
                           --master yarn \
                           --deploy-mode client \
@@ -109,6 +111,8 @@ KAFKA_CMD
                           --executor-memory 512M \
                           --executor-cores 1 \
                           --packages org.apache.spark:spark-sql-kafka-0-10_2.12:3.1.1 \
+                          --conf spark.pyspark.python=/usr/bin/python3 \
+                          --conf spark.pyspark.driver.python=/usr/bin/python3 \
                           send_data_to_kafka.py > /tmp/producer_${BUILD_NUMBER}.log 2>&1 &
                         echo "✓ Producer started (PID: \$!)"
 INNER_CMD
@@ -132,6 +136,8 @@ PRODUCER_CMD
                         cd ${PROJECT_DIR}/src/realtime
                         pkill -9 -f read_from_kafka.py || true
                         hdfs dfs -rm -r -f -skipTrash /tmp/uttam/kafka/tfl_arrivals/checkpoint || true
+                        export PYSPARK_PYTHON=/usr/bin/python3
+                        export PYSPARK_DRIVER_PYTHON=/usr/bin/python3
                         nohup timeout ${DURATION_MINUTES}m spark-submit \
                           --master yarn \
                           --deploy-mode client \
@@ -139,6 +145,8 @@ PRODUCER_CMD
                           --executor-memory 512M \
                           --executor-cores 1 \
                           --packages org.apache.spark:spark-sql-kafka-0-10_2.12:3.1.1 \
+                          --conf spark.pyspark.python=/usr/bin/python3 \
+                          --conf spark.pyspark.driver.python=/usr/bin/python3 \
                           read_from_kafka.py > /tmp/consumer_${BUILD_NUMBER}.log 2>&1 &
                         echo "✓ Consumer started (PID: \$!)"
 INNER_CMD
