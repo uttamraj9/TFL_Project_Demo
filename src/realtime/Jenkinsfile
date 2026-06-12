@@ -2,8 +2,7 @@ pipeline {
     agent any
 
     parameters {
-        choice(name: 'MODE', choices: ['both', 'producer', 'consumer'], description: 'Run mode')
-        string(name: 'DURATION_MINUTES', defaultValue: '5', description: 'Duration in minutes')
+        string(name: 'DURATION_MINUTES', defaultValue: '5', description: 'How long to run')
     }
 
     stages {
@@ -13,22 +12,13 @@ pipeline {
                     ssh -i ~/Desktop/Training/test_key.pem ec2-user@13.41.167.97 << 'EOF'
                     sudo -u consultant bash << 'SCRIPT'
                     cd /home/consultant/uttam
-                    [ -d TFL_Project_Demo ] && cd TFL_Project_Demo && git pull || git clone https://github.com/uttamraj9/TFL_Project_Demo.git
+                    rm -rf TFL_Project_Demo
+                    git clone https://github.com/uttamraj9/TFL_Project_Demo.git
                     cd TFL_Project_Demo/src/realtime
 
-                    pip3 install --user kafka-python requests
-                    echo "create 'tfl_arrivals', 'cf'" | hbase shell || true
+                    pip3 install --user kafka-python happybase requests
 
-                    pkill -f send_data_to_kafka_simple || true
-                    pkill -f read_from_kafka_hbase || true
-
-                    nohup python3 send_data_to_kafka_simple.py > producer.log 2>&1 &
-                    sleep 10
-                    nohup spark-submit --packages org.apache.spark:spark-sql-kafka-0-10_2.12:3.1.1 read_from_kafka_hbase.py > consumer.log 2>&1 &
-                    sleep 30
-
-                    tail producer.log
-                    echo "scan 'tfl_arrivals', {LIMIT => 5}" | hbase shell
+                    bash test.sh
 SCRIPT
 EOF
                 '''
