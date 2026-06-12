@@ -24,9 +24,10 @@ pipeline {
         PROJECT_DIR = '/home/consultant/uttam/TFL_Project_Demo'
         REALTIME_DIR = '${PROJECT_DIR}/src/realtime'
 
-        KAFKA_BROKERS = 'ip-172-31-8-235.eu-west-2.compute.internal:9092,ip-172-31-14-3.eu-west-2.compute.internal:9092'
+        KAFKA_BROKERS = 'ip-172-31-6-42.eu-west-2.compute.internal:9092,ip-172-31-3-251.eu-west-2.compute.internal:9092,ip-172-31-3-85.eu-west-2.compute.internal:9092,ip-172-31-12-74.eu-west-2.compute.internal:9092'
         KAFKA_TOPIC = 'tfl_arrivals'
         HBASE_TABLE = 'tfl_arrivals'
+        HBASE_MASTER = 'ip-172-31-12-74.eu-west-2.compute.internal'
 
         PYSPARK_PYTHON = '/usr/bin/python3'
 

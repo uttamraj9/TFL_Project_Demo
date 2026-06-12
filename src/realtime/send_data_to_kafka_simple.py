@@ -12,9 +12,13 @@ from kafka import KafkaProducer
 from datetime import datetime
 
 def main():
-    # Kafka Configuration
-    kafka_brokers = ["ip-172-31-8-235.eu-west-2.compute.internal:9092",
-                     "ip-172-31-14-3.eu-west-2.compute.internal:9092"]
+    # Kafka Configuration (from Cloudera Manager)
+    kafka_brokers = [
+        "ip-172-31-6-42.eu-west-2.compute.internal:9092",
+        "ip-172-31-3-251.eu-west-2.compute.internal:9092",
+        "ip-172-31-3-85.eu-west-2.compute.internal:9092",
+        "ip-172-31-12-74.eu-west-2.compute.internal:9092"
+    ]
     kafka_topic = "tfl_arrivals"
 
     # TfL API Configuration
