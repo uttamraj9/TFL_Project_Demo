@@ -1,24 +1,279 @@
+// Jenkinsfile for TfL Real-time Pipeline (Kafka + Spark Streaming)
+// Producer: TfL API → Kafka
+// Consumer: Kafka → HDFS
+
 pipeline {
     agent any
 
+    parameters {
+        choice(
+            name: 'MODE',
+            choices: ['producer', 'consumer', 'both'],
+            description: 'Run producer, consumer, or both'
+        )
+        string(
+            name: 'DURATION_MINUTES',
+            defaultValue: '5',
+            description: 'How long to run (minutes)'
+        )
+    }
+
+    environment {
+        // Cloudera Cluster
+        REMOTE_HOST = '13.41.167.97'
+        REMOTE_USER = 'consultant'
+        REMOTE_PASSWORD = 'WelcomeItc@2026'
+        PROJECT_DIR = '/home/consultant/uttam/TFL_Project_Demo'
+        REALTIME_DIR = '${PROJECT_DIR}/src/realtime'
+
+        // Kafka Brokers (from your cluster)
+        KAFKA_BROKERS = 'ip-172-31-8-235.eu-west-2.compute.internal:9092,ip-172-31-14-3.eu-west-2.compute.internal:9092'
+        KAFKA_TOPIC = 'tfl_arrivals'
+
+        // Python path
+        PYSPARK_PYTHON = '/usr/bin/python3'
+    }
+
     stages {
-        stage('Run Pipeline') {
+        stage('Checkout') {
             steps {
+                echo '========================================='
+                echo 'TfL Real-time Streaming Pipeline'
+                echo '========================================='
+                echo "Mode: ${params.MODE}"
+                echo "Duration: ${params.DURATION_MINUTES} minutes"
+                checkout scm
+                sh 'git log -1 --oneline'
+            }
+        }
+
+        stage('Deploy PySpark Scripts') {
+            steps {
+                echo '========================================='
+                echo 'Deploy PySpark Scripts to Cloudera'
+                echo '========================================='
                 sh '''
-                    ssh -i ~/Desktop/Training/test_key.pem ec2-user@13.41.167.97 << 'EOF'
-                    sudo -u consultant bash << 'SCRIPT'
-                    cd /home/consultant/uttam
-                    rm -rf TFL_Project_Demo
-                    git clone https://github.com/uttamraj9/TFL_Project_Demo.git
-                    cd TFL_Project_Demo/src/realtime
+                    # Create directory
+                    sshpass -p "${REMOTE_PASSWORD}" ssh -o StrictHostKeyChecking=no \
+                        -o UserKnownHostsFile=/dev/null ${REMOTE_USER}@${REMOTE_HOST} \
+                        "mkdir -p ${REALTIME_DIR}"
 
-                    pip3 install --user kafka-python requests
+                    # Copy scripts
+                    sshpass -p "${REMOTE_PASSWORD}" scp -o StrictHostKeyChecking=no \
+                        -o UserKnownHostsFile=/dev/null src/realtime/*.py \
+                        ${REMOTE_USER}@${REMOTE_HOST}:${REALTIME_DIR}/
 
-                    bash test.sh
-SCRIPT
-EOF
+                    # Set permissions
+                    sshpass -p "${REMOTE_PASSWORD}" ssh -o StrictHostKeyChecking=no \
+                        -o UserKnownHostsFile=/dev/null ${REMOTE_USER}@${REMOTE_HOST} \
+                        "chmod +x ${REALTIME_DIR}/*.py"
+
+                    echo "✓ Scripts deployed"
                 '''
             }
+        }
+
+        stage('Check Kafka') {
+            steps {
+                echo '========================================='
+                echo 'Verify Kafka Availability'
+                echo '========================================='
+                sh '''
+                    echo "Checking Kafka broker connectivity..."
+                    sshpass -p "${REMOTE_PASSWORD}" ssh -o StrictHostKeyChecking=no \
+                        -o UserKnownHostsFile=/dev/null ${REMOTE_USER}@${REMOTE_HOST} \
+                        "timeout 5 nc -zv ip-172-31-8-235.eu-west-2.compute.internal 9092" || \
+                        echo "⚠ Kafka might not be running"
+                '''
+            }
+        }
+
+        stage('Create Kafka Topic') {
+            steps {
+                echo '========================================='
+                echo 'Create Kafka Topic'
+                echo '========================================='
+                sh '''
+                    sshpass -p "${REMOTE_PASSWORD}" ssh -o StrictHostKeyChecking=no \
+                        -o UserKnownHostsFile=/dev/null ${REMOTE_USER}@${REMOTE_HOST} \
+                        "kafka-topics --create --if-not-exists \
+                        --bootstrap-server ${KAFKA_BROKERS} \
+                        --topic ${KAFKA_TOPIC} \
+                        --partitions 3 \
+                        --replication-factor 2" 2>&1 || echo "Topic may already exist"
+
+                    echo "✓ Kafka topic ready: ${KAFKA_TOPIC}"
+                '''
+            }
+        }
+
+        stage('Run Producer') {
+            when {
+                expression { params.MODE == 'producer' || params.MODE == 'both' }
+            }
+            steps {
+                echo '========================================='
+                echo 'Start Kafka Producer (TfL API → Kafka)'
+                echo '========================================='
+                sh '''
+                    sshpass -p "${REMOTE_PASSWORD}" ssh -o StrictHostKeyChecking=no \
+                        -o UserKnownHostsFile=/dev/null ${REMOTE_USER}@${REMOTE_HOST} bash << 'PRODUCER_SCRIPT'
+
+cd ${REALTIME_DIR}
+
+# Kill any existing producer
+pkill -9 -f send_data_to_kafka.py || true
+
+# Run producer with timeout
+timeout ${DURATION_MINUTES}m spark-submit \
+  --master yarn \
+  --deploy-mode client \
+  --num-executors 1 \
+  --executor-memory 512M \
+  --executor-cores 1 \
+  --packages org.apache.spark:spark-sql-kafka-0-10_2.12:3.1.1 \
+  --conf spark.pyspark.python=${PYSPARK_PYTHON} \
+  --conf spark.pyspark.driver.python=${PYSPARK_PYTHON} \
+  send_data_to_kafka.py 2>&1 | tee /tmp/producer_${BUILD_NUMBER}.log &
+
+PRODUCER_PID=$!
+echo "Producer started with PID: $PRODUCER_PID"
+echo $PRODUCER_PID > /tmp/producer_${BUILD_NUMBER}.pid
+
+PRODUCER_SCRIPT
+
+                    echo "✓ Producer running in background"
+                '''
+            }
+        }
+
+        stage('Run Consumer') {
+            when {
+                expression { params.MODE == 'consumer' || params.MODE == 'both' }
+            }
+            steps {
+                echo '========================================='
+                echo 'Start Kafka Consumer (Kafka → HDFS)'
+                echo '========================================='
+                sh '''
+                    sshpass -p "${REMOTE_PASSWORD}" ssh -o StrictHostKeyChecking=no \
+                        -o UserKnownHostsFile=/dev/null ${REMOTE_USER}@${REMOTE_HOST} bash << 'CONSUMER_SCRIPT'
+
+cd ${REALTIME_DIR}
+
+# Kill any existing consumer
+pkill -9 -f read_from_kafka.py || true
+
+# Clean checkpoint for fresh start
+hdfs dfs -rm -r -f -skipTrash /tmp/uttam/kafka/tfl_arrivals/checkpoint
+
+# Run consumer with timeout
+timeout ${DURATION_MINUTES}m spark-submit \
+  --master yarn \
+  --deploy-mode client \
+  --num-executors 1 \
+  --executor-memory 512M \
+  --executor-cores 1 \
+  --packages org.apache.spark:spark-sql-kafka-0-10_2.12:3.1.1 \
+  --conf spark.pyspark.python=${PYSPARK_PYTHON} \
+  --conf spark.pyspark.driver.python=${PYSPARK_PYTHON} \
+  read_from_kafka.py 2>&1 | tee /tmp/consumer_${BUILD_NUMBER}.log &
+
+CONSUMER_PID=$!
+echo "Consumer started with PID: $CONSUMER_PID"
+echo $CONSUMER_PID > /tmp/consumer_${BUILD_NUMBER}.pid
+
+CONSUMER_SCRIPT
+
+                    echo "✓ Consumer running in background"
+                '''
+            }
+        }
+
+        stage('Monitor Pipeline') {
+            steps {
+                echo '========================================='
+                echo 'Monitor Streaming Pipeline'
+                echo '========================================='
+                sh '''
+                    DURATION_SECONDS=$((${DURATION_MINUTES} * 60))
+                    echo "Running for ${DURATION_MINUTES} minutes (${DURATION_SECONDS} seconds)..."
+
+                    sleep ${DURATION_SECONDS}
+
+                    echo "✓ Duration complete"
+                '''
+            }
+        }
+
+        stage('Verify Results') {
+            steps {
+                echo '========================================='
+                echo 'Verify HDFS Output'
+                echo '========================================='
+                sh '''
+                    echo "Checking HDFS output..."
+                    sshpass -p "${REMOTE_PASSWORD}" ssh -o StrictHostKeyChecking=no \
+                        -o UserKnownHostsFile=/dev/null ${REMOTE_USER}@${REMOTE_HOST} \
+                        "hdfs dfs -ls /tmp/uttam/kafka/tfl_arrivals/data/ 2>&1 | head -20" || \
+                        echo "No data written yet"
+
+                    echo ""
+                    echo "Sample records:"
+                    sshpass -p "${REMOTE_PASSWORD}" ssh -o StrictHostKeyChecking=no \
+                        -o UserKnownHostsFile=/dev/null ${REMOTE_USER}@${REMOTE_HOST} \
+                        "hdfs dfs -cat /tmp/uttam/kafka/tfl_arrivals/data/*.csv 2>/dev/null | head -10" || \
+                        echo "No CSV files yet"
+                '''
+            }
+        }
+
+        stage('Cleanup') {
+            steps {
+                echo '========================================='
+                echo 'Stop Streaming Jobs'
+                echo '========================================='
+                sh '''
+                    echo "Stopping producer and consumer..."
+                    sshpass -p "${REMOTE_PASSWORD}" ssh -o StrictHostKeyChecking=no \
+                        -o UserKnownHostsFile=/dev/null ${REMOTE_USER}@${REMOTE_HOST} \
+                        "pkill -9 -f send_data_to_kafka.py || true; \
+                         pkill -9 -f read_from_kafka.py || true" 2>&1
+
+                    echo "✓ Jobs stopped"
+                '''
+            }
+        }
+    }
+
+    post {
+        success {
+            echo '========================================='
+            echo '✓✓✓ REAL-TIME PIPELINE COMPLETED ✓✓✓'
+            echo '========================================='
+            echo "Mode: ${params.MODE}"
+            echo "Duration: ${params.DURATION_MINUTES} minutes"
+            echo ""
+            echo "Kafka Topic: ${KAFKA_TOPIC}"
+            echo "HDFS Output: /tmp/uttam/kafka/tfl_arrivals/data/"
+            echo ""
+            echo "View in Hue: http://${REMOTE_HOST}:8888"
+            echo "YARN Apps: http://${REMOTE_HOST}:8088"
+            echo '========================================='
+        }
+        failure {
+            echo '========================================='
+            echo '✗✗✗ PIPELINE FAILED ✗✗✗'
+            echo '========================================='
+            echo "Mode: ${params.MODE}"
+            echo ""
+            echo "Check logs:"
+            echo "  Producer: /tmp/producer_${BUILD_NUMBER}.log"
+            echo "  Consumer: /tmp/consumer_${BUILD_NUMBER}.log"
+            echo '========================================='
+        }
+        always {
+            echo 'Pipeline execution completed'
         }
     }
 }

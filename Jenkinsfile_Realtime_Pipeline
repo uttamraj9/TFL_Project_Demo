@@ -122,7 +122,7 @@ pipeline {
 cd ${REALTIME_DIR}
 
 # Kill any existing producer
-pkill -9 -f send_data_to_kafka || true
+pkill -9 -f send_data_to_kafka.py || true
 
 # Run producer with timeout
 timeout ${DURATION_MINUTES}m spark-submit \
@@ -162,7 +162,7 @@ PRODUCER_SCRIPT
 cd ${REALTIME_DIR}
 
 # Kill any existing consumer
-pkill -9 -f read_from_kafka || true
+pkill -9 -f read_from_kafka.py || true
 
 # Clean checkpoint for fresh start
 hdfs dfs -rm -r -f -skipTrash /tmp/uttam/kafka/tfl_arrivals/checkpoint
@@ -237,8 +237,8 @@ CONSUMER_SCRIPT
                     echo "Stopping producer and consumer..."
                     sshpass -p "${REMOTE_PASSWORD}" ssh -o StrictHostKeyChecking=no \
                         -o UserKnownHostsFile=/dev/null ${REMOTE_USER}@${REMOTE_HOST} \
-                        "pkill -9 -f send_data_to_kafka || true; \
-                         pkill -9 -f read_from_kafka || true" 2>&1
+                        "pkill -9 -f send_data_to_kafka.py || true; \
+                         pkill -9 -f read_from_kafka.py || true" 2>&1
 
                     echo "✓ Jobs stopped"
                 '''
