@@ -127,15 +127,15 @@ PRODUCER_CMD
             }
             steps {
                 echo '========================================='
-                echo 'Start Kafka Consumer (Kafka → HDFS)'
+                echo 'Start Kafka Consumer (Kafka → HBase)'
                 echo '========================================='
                 sh '''
                     ssh -i ${SSH_KEY} -o StrictHostKeyChecking=no \
                         ec2-user@${CLOUDERA_HOST} bash << 'CONSUMER_CMD'
                         sudo -u consultant bash << "INNER_CMD"
                         cd ${PROJECT_DIR}/src/realtime
-                        pkill -9 -f read_from_kafka.py || true
-                        hdfs dfs -rm -r -f -skipTrash /tmp/uttam/kafka/tfl_arrivals/checkpoint || true
+                        pkill -9 -f read_from_kafka_hbase.py || true
+                        hdfs dfs -rm -r -f -skipTrash /tmp/uttam/kafka/tfl_hbase/checkpoint || true
                         export PYSPARK_PYTHON=/usr/bin/python3
                         export PYSPARK_DRIVER_PYTHON=/usr/bin/python3
                         nohup timeout ${DURATION_MINUTES}m spark-submit \
@@ -144,11 +144,11 @@ PRODUCER_CMD
                           --num-executors 1 \
                           --executor-memory 512M \
                           --executor-cores 1 \
-                          --packages org.apache.spark:spark-sql-kafka-0-10_2.12:3.1.1 \
+                          --packages org.apache.spark:spark-sql-kafka-0-10_2.12:3.1.1,org.apache.hbase:hbase-spark:2.4.0 \
                           --conf spark.pyspark.python=/usr/bin/python3 \
                           --conf spark.pyspark.driver.python=/usr/bin/python3 \
-                          read_from_kafka.py > /tmp/consumer_${BUILD_NUMBER}.log 2>&1 &
-                        echo "✓ Consumer started (PID: \$!)"
+                          read_from_kafka_hbase.py > /tmp/consumer_${BUILD_NUMBER}.log 2>&1 &
+                        echo "✓ HBase Consumer started (PID: \$!)"
 INNER_CMD
 CONSUMER_CMD
                 '''
@@ -180,20 +180,20 @@ CONSUMER_CMD
         stage('Verify Results') {
             steps {
                 echo '========================================='
-                echo 'Verify HDFS Output'
+                echo 'Verify HBase Output'
                 echo '========================================='
                 sh '''
                     ssh -i ${SSH_KEY} -o StrictHostKeyChecking=no \
                         ec2-user@${CLOUDERA_HOST} bash << 'VERIFY_CMD'
                         sudo -u consultant bash << "INNER_CMD"
-                        echo "HDFS Output:"
-                        hdfs dfs -ls /tmp/uttam/kafka/tfl_arrivals/data/ 2>&1 | tail -10 || echo "No data"
+                        echo "HBase Table Status:"
+                        echo "list 'tfl_arrivals'" | hbase shell 2>/dev/null | grep -E "tfl_arrivals|TABLE|ERROR" || echo "Checking table..."
                         echo ""
-                        echo "Sample Records:"
-                        hdfs dfs -cat /tmp/uttam/kafka/tfl_arrivals/data/*.csv 2>/dev/null | head -5 || echo "No files"
+                        echo "Row Count:"
+                        echo "count 'tfl_arrivals', LIMIT => 100" | hbase shell 2>/dev/null | tail -5
                         echo ""
-                        RECORD_COUNT=\$(hdfs dfs -cat /tmp/uttam/kafka/tfl_arrivals/data/*.csv 2>/dev/null | wc -l || echo "0")
-                        echo "Total records: \$RECORD_COUNT"
+                        echo "Sample Records (first 3):"
+                        echo "scan 'tfl_arrivals', {LIMIT => 3}" | hbase shell 2>/dev/null | grep -A2 "ROW\|column\|value" | head -20
 INNER_CMD
 VERIFY_CMD
                 '''
@@ -209,7 +209,7 @@ VERIFY_CMD
                     ssh -i ${SSH_KEY} -o StrictHostKeyChecking=no \
                         ec2-user@${CLOUDERA_HOST} \
                         "sudo pkill -9 -f send_data_to_kafka.py || true; \
-                         sudo pkill -9 -f read_from_kafka.py || true"
+                         sudo pkill -9 -f read_from_kafka_hbase.py || true"
                     echo "✓ Jobs stopped"
                 '''
             }
@@ -224,7 +224,8 @@ VERIFY_CMD
             echo "Mode: ${params.MODE}"
             echo "Duration: ${params.DURATION_MINUTES} minutes"
             echo "Kafka Topic: ${env.KAFKA_TOPIC}"
-            echo "HDFS Output: /tmp/uttam/kafka/tfl_arrivals/data/"
+            echo "HBase Table: tfl_arrivals"
+            echo "Data Flow: TfL API → Kafka → HBase"
             echo '========================================='
         }
         failure {
