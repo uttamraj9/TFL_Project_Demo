@@ -97,26 +97,8 @@ KAFKA_CMD
                 echo 'Start Kafka Producer (TfL API → Kafka)'
                 echo '========================================='
                 sh '''
-                    ssh -i ${SSH_KEY} -o StrictHostKeyChecking=no \
-                        ec2-user@${CLOUDERA_HOST} bash << 'PRODUCER_CMD'
-                        sudo -u consultant bash << "INNER_CMD"
-                        cd ${PROJECT_DIR}/src/realtime
-                        pkill -9 -f send_data_to_kafka.py || true
-                        export PYSPARK_PYTHON=/usr/bin/python3
-                        export PYSPARK_DRIVER_PYTHON=/usr/bin/python3
-                        nohup timeout ${DURATION_MINUTES}m spark-submit \
-                          --master yarn \
-                          --deploy-mode client \
-                          --num-executors 1 \
-                          --executor-memory 512M \
-                          --executor-cores 1 \
-                          --packages org.apache.spark:spark-sql-kafka-0-10_2.12:3.1.1 \
-                          --conf spark.pyspark.python=/usr/bin/python3 \
-                          --conf spark.pyspark.driver.python=/usr/bin/python3 \
-                          send_data_to_kafka.py > /tmp/producer_${BUILD_NUMBER}.log 2>&1 &
-                        echo "✓ Producer started (PID: \$!)"
-INNER_CMD
-PRODUCER_CMD
+                    ssh -i ${SSH_KEY} -o StrictHostKeyChecking=no ec2-user@${CLOUDERA_HOST} \
+                        "sudo -u consultant bash -c 'cd ${PROJECT_DIR}/src/realtime && nohup timeout ${DURATION_MINUTES}m ./run_producer.sh > /tmp/producer_${BUILD_NUMBER}.log 2>&1 & echo ✓ Producer PID: \$!'"
                 '''
             }
         }
@@ -130,27 +112,8 @@ PRODUCER_CMD
                 echo 'Start Kafka Consumer (Kafka → HBase)'
                 echo '========================================='
                 sh '''
-                    ssh -i ${SSH_KEY} -o StrictHostKeyChecking=no \
-                        ec2-user@${CLOUDERA_HOST} bash << 'CONSUMER_CMD'
-                        sudo -u consultant bash << "INNER_CMD"
-                        cd ${PROJECT_DIR}/src/realtime
-                        pkill -9 -f read_from_kafka_hbase.py || true
-                        hdfs dfs -rm -r -f -skipTrash /tmp/uttam/kafka/tfl_hbase/checkpoint || true
-                        export PYSPARK_PYTHON=/usr/bin/python3
-                        export PYSPARK_DRIVER_PYTHON=/usr/bin/python3
-                        nohup timeout ${DURATION_MINUTES}m spark-submit \
-                          --master yarn \
-                          --deploy-mode client \
-                          --num-executors 1 \
-                          --executor-memory 512M \
-                          --executor-cores 1 \
-                          --packages org.apache.spark:spark-sql-kafka-0-10_2.12:3.1.1,org.apache.hbase:hbase-spark:2.4.0 \
-                          --conf spark.pyspark.python=/usr/bin/python3 \
-                          --conf spark.pyspark.driver.python=/usr/bin/python3 \
-                          read_from_kafka_hbase.py > /tmp/consumer_${BUILD_NUMBER}.log 2>&1 &
-                        echo "✓ HBase Consumer started (PID: \$!)"
-INNER_CMD
-CONSUMER_CMD
+                    ssh -i ${SSH_KEY} -o StrictHostKeyChecking=no ec2-user@${CLOUDERA_HOST} \
+                        "sudo -u consultant bash -c 'cd ${PROJECT_DIR}/src/realtime && nohup timeout ${DURATION_MINUTES}m ./run_consumer.sh > /tmp/consumer_${BUILD_NUMBER}.log 2>&1 & echo ✓ Consumer PID: \$!'"
                 '''
             }
         }
