@@ -113,7 +113,7 @@ KAFKA_CMD
                 echo '========================================='
                 sh '''
                     ssh -i ${SSH_KEY} -o StrictHostKeyChecking=no ec2-user@${CLOUDERA_HOST} \
-                        "sudo -u consultant bash -c 'cd ${PROJECT_DIR}/src/realtime && nohup timeout ${DURATION_MINUTES}m ./run_consumer.sh > /tmp/consumer_${BUILD_NUMBER}.log 2>&1 & echo ✓ Consumer PID: \$!'"
+                        "sudo -u consultant bash -c 'cd ${PROJECT_DIR}/src/realtime && nohup timeout ${DURATION_MINUTES}m spark-submit --master yarn --deploy-mode client --packages org.apache.spark:spark-sql-kafka-0-10_2.12:3.1.1 --conf spark.pyspark.python=/usr/bin/python3 write_kafka_to_hbase_native.py > /tmp/consumer_${BUILD_NUMBER}.log 2>&1 & echo ✓ Consumer PID: \$!'"
                 '''
             }
         }
@@ -147,18 +147,14 @@ KAFKA_CMD
                 echo '========================================='
                 sh '''
                     ssh -i ${SSH_KEY} -o StrictHostKeyChecking=no \
-                        ec2-user@${CLOUDERA_HOST} bash << 'VERIFY_CMD'
-                        sudo -u consultant bash << 'INNER_CMD'
-                        echo "HBase Table Status:"
-                        echo "list" | hbase shell 2>/dev/null | grep tfl_arrivals || echo "Table not found"
-                        echo ""
-                        echo "Row Count:"
-                        echo "count 'tfl_arrivals', LIMIT => 100" | hbase shell 2>/dev/null | tail -5 || echo "Cannot count"
-                        echo ""
-                        echo "Sample Records:"
-                        echo "scan 'tfl_arrivals', {LIMIT => 3}" | hbase shell 2>/dev/null | head -30 || echo "Cannot scan"
-INNER_CMD
+                        ec2-user@${CLOUDERA_HOST} "sudo -u consultant bash << 'VERIFY_CMD'
+                        echo 'HBase Table: tfl_arrivals'
+                        echo \"count 'tfl_arrivals'\" | hbase shell -n 2>&1 | tail -2
+                        echo ''
+                        echo 'Sample Records:'
+                        echo \"scan 'tfl_arrivals', {LIMIT => 2}\" | hbase shell -n 2>&1 | grep -A 10 COLUMN+CELL | head -15
 VERIFY_CMD
+"
                 '''
             }
         }
@@ -166,14 +162,12 @@ VERIFY_CMD
         stage('Cleanup') {
             steps {
                 echo '========================================='
-                echo 'Stop Streaming Jobs'
+                echo 'Stop Streaming Jobs (Optional - keep running)'
                 echo '========================================='
                 sh '''
-                    ssh -i ${SSH_KEY} -o StrictHostKeyChecking=no \
-                        ec2-user@${CLOUDERA_HOST} \
-                        "sudo pkill -9 -f send_data_to_kafka.py || true; \
-                         sudo pkill -9 -f read_from_kafka_hbase.py || true"
-                    echo "✓ Jobs stopped"
+                    echo "Note: Pipeline jobs left running for continuous streaming"
+                    echo "To stop manually: ssh to Cloudera and pkill -9 -f send_data_to_kafka.py"
+                    echo "✓ Build complete"
                 '''
             }
         }
